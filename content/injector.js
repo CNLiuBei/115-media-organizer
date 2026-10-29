@@ -96,44 +96,49 @@
     return null;
   }
 
-  function parseCidFromDom() {
-    const selectors = [
-      'a[href*="cid="]',
-      '[data-cid]',
-      '#js_top_header_file_path_box a',
-      '.file-path a',
-      '.path a',
-      '#js_path_link_box a',
-    ];
-    let best = null;
-    for (const sel of selectors) {
-      const nodes = document.querySelectorAll(sel);
-      for (const el of nodes) {
-        const dataCid = extractCid(el.getAttribute?.('data-cid'));
-        if (dataCid !== null) best = dataCid;
-        const href = el.getAttribute?.('href') || '';
-        if (href.includes('cid=')) {
-          try {
-            const abs = new URL(href, location.origin);
-            const c = extractCid(abs.searchParams.get('cid'))
-              || parseCidFromLocation(abs.href);
-            if (c !== null) best = c;
-          } catch {
-            const m = href.match(/[?&#]cid=([^&]+)/i);
-            const c = m ? extractCid(decodeURIComponent(m[1])) : null;
-            if (c !== null) best = c;
-          }
-        }
-      }
+  function cidFromElement(el) {
+    if (!el) return null;
+    const dataCid = extractCid(el.getAttribute?.('data-cid'));
+    if (dataCid !== null) return dataCid;
+    const href = el.getAttribute?.('href') || '';
+    if (!href.includes('cid=')) return null;
+    try {
+      const abs = new URL(href, location.origin);
+      return extractCid(abs.searchParams.get('cid')) || parseCidFromLocation(abs.href);
+    } catch {
+      const m = href.match(/[?&#]cid=([^&]+)/i);
+      return m ? extractCid(decodeURIComponent(m[1])) : null;
     }
-    // breadcrumb last item is usually current folder
-    return best;
   }
 
+  function parseCidFromDom() {
+    // Only read breadcrumb / path box — last item is current folder.
+    // Do NOT scan all page links (sidebar would pollute and often fall back to root).
+    const pathBoxes = [
+      '#js_top_header_file_path_box',
+      '#js_file_path_box',
+      '#js_path_link_box',
+      '.file-path',
+      '.path',
+      '#main_top .file-path',
+    ];
+    for (const boxSel of pathBoxes) {
+      const box = document.querySelector(boxSel);
+      if (!box) continue;
+      const nodes = box.querySelectorAll('a[href*="cid="], [data-cid]');
+      let best = null;
+      for (const el of nodes) {
+        const c = cidFromElement(el);
+        if (c !== null) best = c;
+      }
+      if (best !== null) return best;
+    }
+    return null;
+  }
+
+  /** @returns {string|null} null = unknown (do not overwrite a good stored cid with 0) */
   function readCidFromPage() {
-    return parseCidFromLocation()
-      ?? parseCidFromDom()
-      ?? '0';
+    return parseCidFromLocation() ?? parseCidFromDom();
   }
 
   function notifyCid(cid, force = false) {
@@ -148,7 +153,10 @@
   }
 
   function syncCid(force = false) {
-    notifyCid(readCidFromPage(), force);
+    const cid = readCidFromPage();
+    // Unknown page location → keep last good cid; never push fake root "0"
+    if (cid == null) return;
+    notifyCid(cid, force);
   }
 
   function openPanel() {
@@ -156,9 +164,9 @@
       teardown();
       return;
     }
-    const cid = readCidFromPage();
-    notifyCid(cid, true);
-    sendRuntime({ type: 'OPEN_SIDEPANEL', payload: { cid } }, () => {
+    const cid = readCidFromPage() ?? lastCid;
+    if (cid != null) notifyCid(cid, true);
+    sendRuntime({ type: 'OPEN_SIDEPANEL', payload: { cid: cid ?? undefined } }, () => {
       void chrome.runtime?.lastError;
     });
   }
@@ -264,8 +272,13 @@
       }
       if (message?.type === 'REQUEST_CID') {
         const cid = readCidFromPage();
-        notifyCid(cid, true);
-        sendResponse({ ok: true, cid });
+        if (cid != null) {
+          notifyCid(cid, true);
+          sendResponse({ ok: true, cid });
+        } else {
+          // Unknown — let background keep previous storage cid
+          sendResponse({ ok: false, cid: null, reason: 'unresolved' });
+        }
         return true;
       }
       return false;

@@ -115,7 +115,24 @@ async function resolveCidFromTabs() {
     return { cid: fromUrl, source: 'url', tabId: tab.id };
   }
 
-  return { cid: '0', source: 'fallback', tabId: tab.id };
+  // Do NOT invent cid=0 here — that would make recursive scan eat the whole drive
+  return null;
+}
+
+async function readStoredCid() {
+  try {
+    const session = await chrome.storage.session.get(STORAGE_KEYS.lastCid);
+    if (session[STORAGE_KEYS.lastCid] != null && session[STORAGE_KEYS.lastCid] !== '') {
+      return { cid: String(session[STORAGE_KEYS.lastCid]), source: 'session' };
+    }
+  } catch {
+    /* ignore */
+  }
+  const local = await chrome.storage.local.get(STORAGE_KEYS.lastCid);
+  if (local[STORAGE_KEYS.lastCid] != null && local[STORAGE_KEYS.lastCid] !== '') {
+    return { cid: String(local[STORAGE_KEYS.lastCid]), source: 'local' };
+  }
+  return null;
 }
 
 // Keep cid in sync when user navigates 115 tabs
@@ -159,24 +176,20 @@ async function handleMessage(message, sender) {
     }
 
     case 'GET_CID': {
-      // Prefer live tab/content-script cid over stale storage
+      // Prefer live tab/content-script cid; never invent root unless storage says so
       const live = await resolveCidFromTabs();
       if (live?.cid != null) return live;
-      try {
-        const session = await chrome.storage.session.get(STORAGE_KEYS.lastCid);
-        if (session[STORAGE_KEYS.lastCid] != null) {
-          return { cid: String(session[STORAGE_KEYS.lastCid]), source: 'session' };
-        }
-      } catch {
-        /* ignore */
-      }
-      const local = await chrome.storage.local.get(STORAGE_KEYS.lastCid);
-      return { cid: String(local[STORAGE_KEYS.lastCid] || '0'), source: 'local' };
+      const stored = await readStoredCid();
+      if (stored) return stored;
+      return { cid: '0', source: 'default' };
     }
 
     case 'REFRESH_CID': {
       const live = await resolveCidFromTabs();
-      return live || { cid: '0', source: 'none' };
+      if (live?.cid != null) return live;
+      const stored = await readStoredCid();
+      if (stored) return { ...stored, refreshed: false };
+      return { cid: null, source: 'none' };
     }
 
     case 'OPEN_SIDEPANEL': {

@@ -54,6 +54,17 @@ body {
   font-size: 15px;
   font-weight: 700;
   letter-spacing: 0.01em;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.header .ver {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0;
 }
 
 .sub {
@@ -91,6 +102,24 @@ body {
   padding: 10px;
   display: grid;
   gap: 8px;
+}
+
+/* After scan: shrink chrome so the table gets the viewport */
+body.has-results .scan-panel {
+  gap: 6px;
+  padding: 8px 10px;
+}
+body.has-results .header h1 {
+  font-size: 14px;
+}
+body.has-results .meta-hint:not([hidden]) {
+  margin: 0;
+}
+body.has-results .organize-details:not([open]) summary {
+  padding: 4px 0;
+}
+body.has-results .actions-primary {
+  margin-top: 0;
 }
 
 .tools-panel {
@@ -186,6 +215,12 @@ body {
 
 .meta-hint {
   color: var(--warn);
+}
+
+.warn-hint {
+  color: var(--danger);
+  margin-top: 4px;
+  line-height: 1.35;
 }
 
 /* ---------- Organize details ---------- */

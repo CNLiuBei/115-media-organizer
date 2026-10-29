@@ -125,7 +125,8 @@ function updateMetaHint() {
 
 function applyOrganizeUiFromSettings() {
   const s = state.settings;
-  $('enableMeta').checked = !!s.enableMetadata;
+  $('enableMeta').checked = s.enableMetadata !== false;
+  $('scanRecursive').checked = s.scanRecursive !== false;
   $('skipCalibrateOrganized').checked = s.skipCalibrateOrganized !== false;
   $('moveFiles').checked = s.moveFiles !== false;
   $('cleanEmptyFolders').checked = s.cleanEmptyFolders !== false;
@@ -219,12 +220,17 @@ function readOrganizeFields() {
   return {
     moveFiles: $('moveFiles').checked,
     cleanEmptyFolders: $('cleanEmptyFolders').checked,
+    scanRecursive: $('scanRecursive').checked,
     folderLayout: $('folderLayout').value || 'standard',
     targetMode: $('targetMode').value === 'cid' ? 'cid' : 'scan',
     targetCid: $('targetCid').value.trim() || '0',
     targetCidName: state.settings.targetCidName || '',
     targetBasePath: $('targetBasePath').value.trim(),
   };
+}
+
+function syncResultsLayout() {
+  document.body.classList.toggle('has-results', state.rows.length > 0);
 }
 
 function rebuildPlans() {
@@ -302,20 +308,40 @@ async function loadSettings() {
 async function loadCid({ quiet = false, force = false } = {}) {
   try {
     const result = await send('REFRESH_CID').catch(() => send('GET_CID'));
-    const cid = result?.cid != null ? String(result.cid) : null;
-    if (cid == null) return null;
+    const cid = result?.cid != null && result.cid !== '' ? String(result.cid) : null;
+    if (cid == null) {
+      if (!quiet) setStatus('未能读取 115 当前目录，请确认已打开网盘页面或手动填写 CID');
+      updateCidRootWarning();
+      return null;
+    }
     state.autoCid = cid;
     if (force || !state.cidDirty) {
       $('cidInput').value = cid;
       state.rootCid = cid;
       if (force) state.cidDirty = false;
     }
-    if (!quiet) setStatus(`已同步目录 cid=${$('cidInput').value}${result?.source ? ` (${result.source})` : ''}`);
+    if (!quiet) {
+      setStatus(
+        `已同步目录 cid=${$('cidInput').value}` +
+        (result?.source ? ` (${result.source})` : '') +
+        (cid === '0' ? ' · 网盘根目录' : ''),
+      );
+    }
+    updateCidRootWarning();
     return cid;
   } catch {
     /* ignore */
   }
+  updateCidRootWarning();
   return null;
+}
+
+function updateCidRootWarning() {
+  const el = $('cidRootWarn');
+  if (!el) return;
+  const cid = ($('cidInput').value || '').trim() || '0';
+  const recursive = $('scanRecursive')?.checked !== false;
+  el.hidden = !(cid === '0' && recursive);
 }
 
 function formatSize(n) {
@@ -356,8 +382,8 @@ function parseLabel(parsed) {
       const region = parsed.region ? ` · ${parsed.region}` : '';
       base = `${parsed.title} ${parsed.airDate}${region}`;
     } else {
-      const s = String(parsed.season ?? 1).padStart(2, '0');
-      const e = String(parsed.episode ?? 0).padStart(2, '0');
+    const s = String(parsed.season ?? 1).padStart(2, '0');
+    const e = String(parsed.episode ?? 0).padStart(2, '0');
       const e2 = parsed.episodeEnd != null && Number(parsed.episodeEnd) > Number(parsed.episode || 0)
         ? `-E${String(parsed.episodeEnd).padStart(2, '0')}`
         : '';
@@ -478,12 +504,35 @@ function getListContext() {
   return { groups, collisions, collideIds, filterQ, view, textMatched, visibleGroups };
 }
 
-function setViewFilter(view) {
-  if (!view || view === state.viewFilter) return;
+function setViewFilter(view, { force = false } = {}) {
+  if (!view) return;
+  if (!force && view === state.viewFilter) return;
   state.viewFilter = view;
   syncViewChips();
   saveUiPrefs({ viewFilter: state.viewFilter });
   renderTable();
+}
+
+/** After organize: jump to remaining work / conflicts, collapse finished groups. */
+function afterOrganizeSmartView() {
+  for (const group of buildRowGroups()) {
+    const videos = group.rows.filter((r) => !r.companionOf);
+    if (videos.length > 1 && videos.every((r) => r.alreadyOrganized)) {
+      state.groupCollapsed.set(group.key, true);
+    }
+  }
+  const { collisions, collideIds, textMatched } = getListContext();
+  const needLeft = textMatched.some((g) => groupMatchesView(g, 'need', collideIds));
+  const conflictLeft = collisions.length > 0
+    && textMatched.some((g) => groupMatchesView(g, 'conflict', collideIds));
+  if (conflictLeft) {
+    setViewFilter('conflict', { force: true });
+    log('仍有目标路径冲突，已切换到「冲突」视图', 'info');
+  } else if (needLeft) {
+    setViewFilter('need', { force: true });
+  } else {
+    setViewFilter('done', { force: true });
+  }
 }
 
 async function loadUiPrefs() {
@@ -708,9 +757,11 @@ function renderTable() {
     $('summary').hidden = true;
     $('toolsPanel').hidden = true;
     syncViewChips(null);
+    syncResultsLayout();
     return;
   }
 
+  syncResultsLayout();
   $('toolsPanel').hidden = false;
   const summary = summarizeRows(state.rows);
   const listCtx = getListContext();
@@ -825,8 +876,8 @@ function renderTable() {
       tr.dataset.group = group.key;
       tr.className = `group-child${collapsed ? ' is-hidden' : ''}${row.companionOf ? ' is-companion' : ''}${row.alreadyOrganized ? ' is-done' : ''}${isLowConfidence(row) ? ' is-low' : ''}${collideIds.has(row.id) ? ' is-dup' : ''}`;
       const epHint = parseLabel(row.parsed);
-      tr.innerHTML = `
-        <td class="col-check"><input type="checkbox" data-role="select" ${row.selected ? 'checked' : ''} /></td>
+    tr.innerHTML = `
+      <td class="col-check"><input type="checkbox" data-role="select" ${row.selected ? 'checked' : ''} /></td>
         <td class="col-work">
           <div class="file-cell">
             <div class="file-name" title="${escapeAttr(row.originalName)}">${escapeHtml(row.originalName)}${row.alreadyOrganized ? ' <span class="tag-done">已在位</span>' : ''}${collideIds.has(row.id) ? ' <span class="tag-warn">冲突</span>' : ''}</div>
@@ -836,15 +887,15 @@ function renderTable() {
               · ${formatSize(row.size)}${row.companionOf ? ' · 附属' : ''}
             </div>
           </div>
-        </td>
+      </td>
         <td class="col-plan">
           <div class="plan-stack">
             <input type="text" class="plan-name" data-role="newName" value="${escapeAttr(row.newName)}" title="${escapeAttr(row.newName)}" />
             <input type="text" class="plan-path" data-role="path" value="${escapeAttr(row.pathDisplay)}" ${!$('moveFiles').checked ? 'disabled' : ''} title="${escapeAttr(row.pathDisplay)}" />
           </div>
         </td>
-      `;
-      tbody.appendChild(tr);
+    `;
+    tbody.appendChild(tr);
     }
   }
 
@@ -1047,8 +1098,8 @@ $('tbody').addEventListener('change', (e) => {
       for (const c of state.rows.filter((r) => r.companionOf === row.id)) {
         c.selected = row.selected;
       }
-    }
-    renderTable();
+      }
+      renderTable();
   } else if (role === 'newName' || role === 'path') {
     refreshOrganizeStatus(state.rows);
   }
@@ -1208,15 +1259,25 @@ $('btnCopyPlan').addEventListener('click', async () => {
   }
 });
 
+let tableFilterTimer = 0;
 $('tableFilter')?.addEventListener('input', () => {
   state.tableFilter = $('tableFilter').value || '';
-  renderTable();
+  clearTimeout(tableFilterTimer);
+  tableFilterTimer = setTimeout(() => renderTable(), 120);
 });
 
 $('viewFilters')?.addEventListener('click', (e) => {
   const btn = e.target.closest('.view-chip');
   if (!btn?.dataset.view) return;
   setViewFilter(btn.dataset.view);
+});
+
+// Double-click a view chip → switch + 勾选可见
+$('viewFilters')?.addEventListener('dblclick', (e) => {
+  const btn = e.target.closest('.view-chip');
+  if (!btn?.dataset.view || !state.rows.length) return;
+  setViewFilter(btn.dataset.view, { force: true });
+  $('btnSelectVisible')?.click();
 });
 
 $('organizeBox')?.addEventListener('toggle', () => {
@@ -1332,6 +1393,11 @@ $('enableMeta').addEventListener('change', async () => {
   await saveSettings({ enableMetadata: $('enableMeta').checked });
 });
 
+$('scanRecursive').addEventListener('change', async () => {
+  updateCidRootWarning();
+  await saveSettings({ scanRecursive: $('scanRecursive').checked });
+});
+
 $('skipCalibrateOrganized').addEventListener('change', async () => {
   await saveSettings({ skipCalibrateOrganized: $('skipCalibrateOrganized').checked });
 });
@@ -1342,6 +1408,7 @@ $('recentCid').addEventListener('change', () => {
   $('cidInput').value = cid;
   state.cidDirty = true;
   state.rootCid = cid;
+  updateCidRootWarning();
   setStatus(`已选择最近目录 cid=${cid}`);
   log(`切换到最近目录 cid=${cid}`, 'ok');
 });
@@ -1349,6 +1416,7 @@ $('recentCid').addEventListener('change', () => {
 $('cidInput').addEventListener('input', () => {
   state.cidDirty = true;
   state.rootCid = $('cidInput').value.trim() || '0';
+  updateCidRootWarning();
 });
 
 $('btnRefreshCid').addEventListener('click', async () => {
@@ -1471,22 +1539,42 @@ function stopScan() {
 
 async function scan() {
   if (state.running || state.scanning) return;
+  // Sync from 115 page only when user hasn't manually edited CID
   if (!state.cidDirty) {
     await loadCid({ quiet: true, force: true });
   }
   const cid = $('cidInput').value.trim() || '0';
+  const recursive = $('scanRecursive').checked;
+
+  // Guard: cid=0 + recursive ≈ entire cloud drive
+  if (cid === '0' && recursive) {
+    const ok = confirm(
+      '当前扫描目录是网盘根目录（cid=0），且勾选了「含子文件夹」。\n\n' +
+      '这会递归扫描整个 115 网盘，可能极慢并产生海量结果。\n\n' +
+      '建议：先在 115 页面进入具体文件夹，点「同步」，或手动填入目录 CID。\n\n' +
+      '仍要继续扫描全盘吗？',
+    );
+    if (!ok) {
+      setStatus('已取消扫描（根目录保护）');
+      log('已取消：避免在网盘根目录递归扫描全盘', 'info');
+      return;
+    }
+  }
+
   state.rootCid = cid;
   await send('SET_CID', { cid }).catch(() => {});
-  await pushRecentCid(cid, cid === state.autoCid ? '当前 115 目录' : `目录 ${cid}`);
+  await pushRecentCid(cid, cid === '0' ? '网盘根目录' : (cid === state.autoCid ? '当前 115 目录' : `目录 ${cid}`));
 
-  const recursive = $('scanRecursive').checked;
   const abort = new AbortController();
   state.scanAbort = abort;
   const signal = abort.signal;
   let aborted = false;
 
   setStatus('正在检查登录…');
-  log(`扫描目录 cid=${cid}${recursive ? '（含子文件夹）' : '（仅当前层）'}`);
+  log(
+    `扫描目录 cid=${cid}${cid === '0' ? '（网盘根）' : ''}` +
+    `${recursive ? '（含子文件夹）' : '（仅当前层）'}`,
+  );
   setScanningUi(true);
 
   try {
@@ -1577,6 +1665,12 @@ async function scan() {
       }
       const cal = await runCalibration(state.rows, { signal });
       if (cal.aborted) aborted = true;
+    } else if (!settings.enableMetadata && state.rows.length) {
+      const tvEps = state.rows.filter((r) => !r.companionOf && r.parsed?.season != null).length;
+      log(
+        `未开启 TMDB 校准${tvEps ? `（含 ${tvEps} 个剧集文件）` : ''}：勾选上方「TMDB 校准」可自动匹配中文片名与海报`,
+        'info',
+      );
     } else if (settings.enableMetadata && signal.aborted) {
       log('已停止，跳过 TMDB 校准', 'info');
     }
@@ -1601,8 +1695,8 @@ async function scan() {
       setStatus('扫描已停止');
       log('已停止扫描', 'ok');
     } else {
-      setStatus('扫描失败');
-      log(err.message || String(err), 'error');
+    setStatus('扫描失败');
+    log(err.message || String(err), 'error');
     }
   } finally {
     state.scanAbort = null;
@@ -1765,7 +1859,7 @@ async function runOrganize() {
     }
   }
   refreshOrganizeStatus(state.rows);
-  renderTable();
+  afterOrganizeSmartView();
 
   if (doClean && okCount > 0 && !aborted) {
     await runCleanup({ quietConfirm: true, reason: '整理后自动清理' });
@@ -1924,6 +2018,12 @@ setInterval(() => {
 }, 2000);
 
 (async function init() {
+  try {
+    const ver = chrome.runtime.getManifest?.()?.version;
+    if (ver && $('appVersion')) $('appVersion').textContent = `v${ver}`;
+  } catch {
+    /* ignore */
+  }
   await loadSettings();
   await hydrateTmdbCache();
   await loadUiPrefs();

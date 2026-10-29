@@ -312,6 +312,14 @@ check(
     rows[0]?.parsed?.pathTitle === '稻草人' && rows[0]?.parsed?.kind === 'tv',
     JSON.stringify(rows[0]?.parsed),
   );
+  check(
+    'Viu + CJK path → 日韩',
+    detectRegion({
+      filename: 'Strawman.S01E01.1080p.Viu.WEB-DL.mkv',
+      title: '稻草人',
+      relPath: pack,
+    }) === '日韩剧',
+  );
 }
 
 console.log(fail ? `\nFAILED ${fail}` : '\nALL PASS');

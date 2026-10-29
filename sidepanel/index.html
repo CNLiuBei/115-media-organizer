@@ -9,7 +9,7 @@
 <body>
   <header class="header">
     <div class="header-main">
-      <h1>115 媒体整理</h1>
+      <h1>115 媒体整理 <span class="ver" id="appVersion"></span></h1>
       <p class="sub" id="statusLine">准备就绪</p>
     </div>
     <a class="link" href="../options/index.html" target="_blank">设置</a>
@@ -19,21 +19,22 @@
     <label class="field cid-field">
       <span class="field-label">扫描目录</span>
       <div class="cid-row">
-        <input id="cidInput" type="text" value="0" placeholder="CID" title="目录 CID，可手动改" />
+        <input id="cidInput" type="text" value="" placeholder="点同步读取当前目录 CID" title="目录 CID，可手动改；勿填 0 除非要扫全盘" />
         <button id="btnRefreshCid" class="btn" type="button" title="从当前 115 标签页重新读取">同步</button>
         <select id="recentCid" title="最近扫描过的目录">
           <option value="">最近…</option>
         </select>
       </div>
+      <p class="hint warn-hint" id="cidRootWarn" hidden>当前是网盘根目录 + 含子文件夹 = 将扫描整个网盘。请先「同步」到具体文件夹。</p>
     </label>
 
     <div class="check-row" role="group" aria-label="扫描选项">
-      <label class="chip" title="递归扫描子文件夹">
+      <label class="chip" title="递归扫描子文件夹；在根目录(cid=0)下会扫全盘">
         <input id="scanRecursive" type="checkbox" checked />
         <span>含子文件夹</span>
       </label>
       <label class="chip" title="用 TMDB 把杂乱文件名校准为标准中文片名">
-        <input id="enableMeta" type="checkbox" />
+        <input id="enableMeta" type="checkbox" checked />
         <span>TMDB 校准</span>
       </label>
       <label class="chip" title="已在目标位置且带 tmdb id 的文件跳过网络校准">
@@ -139,11 +140,11 @@
       <input id="tableFilter" type="search" placeholder="筛选…  /" autocomplete="off" title="快捷键 /" />
     </div>
     <div class="view-filters" id="viewFilters" role="tablist" aria-label="列表筛选">
-      <button type="button" class="view-chip is-active" data-view="all" title="快捷键 1">全部<span class="view-count" hidden>0</span></button>
-      <button type="button" class="view-chip" data-view="need" title="快捷键 2">待整理<span class="view-count" hidden>0</span></button>
-      <button type="button" class="view-chip" data-view="done" title="快捷键 3">已在位<span class="view-count" hidden>0</span></button>
-      <button type="button" class="view-chip" data-view="low" title="快捷键 4">低置信<span class="view-count" hidden>0</span></button>
-      <button type="button" class="view-chip" data-view="conflict" title="快捷键 5">冲突<span class="view-count" hidden>0</span></button>
+      <button type="button" class="view-chip is-active" data-view="all" title="快捷键 1 · 双击勾选可见">全部<span class="view-count" hidden>0</span></button>
+      <button type="button" class="view-chip" data-view="need" title="快捷键 2 · 双击勾选可见">待整理<span class="view-count" hidden>0</span></button>
+      <button type="button" class="view-chip" data-view="done" title="快捷键 3 · 双击勾选可见">已在位<span class="view-count" hidden>0</span></button>
+      <button type="button" class="view-chip" data-view="low" title="快捷键 4 · 双击勾选可见">低置信<span class="view-count" hidden>0</span></button>
+      <button type="button" class="view-chip" data-view="conflict" title="快捷键 5 · 双击勾选可见">冲突<span class="view-count" hidden>0</span></button>
     </div>
   </section>
 
