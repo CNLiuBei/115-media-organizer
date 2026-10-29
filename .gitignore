@@ -1,0 +1,9 @@
+.DS_Store
+*.log
+node_modules/
+.idea/
+.vscode/
+*.pem
+.env
+.env.*
+!.env.example

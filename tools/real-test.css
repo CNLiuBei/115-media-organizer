@@ -1,0 +1,16 @@
+body {
+  font: 13px/1.45 ui-sans-serif, system-ui;
+  margin: 16px;
+  background: #0f1720;
+  color: #e7eef6;
+}
+pre {
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: #111827;
+  padding: 12px;
+  border-radius: 8px;
+}
+.ok { color: #4ade80; }
+.err { color: #f87171; }
+.muted { color: #94a3b8; }

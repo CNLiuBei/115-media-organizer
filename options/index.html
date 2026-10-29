@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>115 媒体整理 · 设置</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>设置</h1>
+      <p>配置筛选规则、命名模板与元数据源。模板变量：<code>{folder}</code>（例：良医 (2017) {tmdb-71712}）<code>{title}</code> <code>{year}</code> <code>{tmdbid}</code> <code>{tmdb}</code> <code>{season}</code> <code>{episode}</code> <code>{date}</code> <code>{edition}</code> <code>{ext}</code> <code>{region}</code> <code>{part}</code></p>
+    </header>
+
+    <form id="form">
+      <section>
+        <h2>TMDB 片名校准</h2>
+        <label class="row">
+          <span>TMDB API Key</span>
+          <input id="tmdbApiKey" type="password" autocomplete="off" placeholder="v3 API Key 或 v4 Read Access Token" />
+        </label>
+        <p class="hint">可选：在 <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer">TMDB API 设置</a> 申请。不填也可以，扩展会走网页搜索（国内通常可用）。</p>
+        <label class="check">
+          <input id="enableMetadata" type="checkbox" />
+          <span>默认开启 TMDB 片名校准</span>
+        </label>
+        <label class="check">
+          <input id="preferDouban" type="checkbox" />
+          <span>同时查询豆瓣作中文名补充（非官方接口，可能不稳定）</span>
+        </label>
+      </section>
+
+      <section>
+        <h2>筛选</h2>
+        <label class="row">
+          <span>最小体积 (MB)</span>
+          <input id="minSizeMB" type="number" min="0" step="1" />
+        </label>
+        <label class="row">
+          <span>扫描/校准请求间隔 (ms)</span>
+          <input id="requestDelayMs" type="number" min="0" step="50" />
+        </label>
+        <p class="hint">主要用于扫描与 TMDB；整理已改为批量移动，批次间隔固定很短，接近官网多选移动。</p>
+        <div class="checks">
+          <label class="check"><input id="includeVideo" type="checkbox" /> 视频</label>
+          <label class="check"><input id="includeAudio" type="checkbox" /> 音频</label>
+          <label class="check"><input id="includeSubtitle" type="checkbox" /> 字幕（跟随视频）</label>
+          <label class="check"><input id="includeImage" type="checkbox" /> 图片/NFO（跟随视频）</label>
+          <label class="check"><input id="skipJunkMedia" type="checkbox" /> 跳过样本/预告/花絮</label>
+          <label class="check"><input id="skipCalibrateOrganized" type="checkbox" /> 复扫时跳过已在位校准</label>
+          <label class="check"><input id="moveFiles" type="checkbox" /> 默认移动到目标路径</label>
+          <label class="check"><input id="cleanEmptyFolders" type="checkbox" /> 整理后自动清理无视频文件夹</label>
+        </div>
+        <p class="hint">清理会把扫描目录下已无视频的子文件夹移入回收站（不会删扫描根目录本身；根目录 cid=0 时跳过自动清理）。</p>
+      </section>
+
+      <section>
+        <h2>整理后的文件夹</h2>
+        <label class="row">
+          <span>默认目录结构</span>
+          <select id="folderLayout"></select>
+        </label>
+        <p class="hint" id="folderLayoutHint"></p>
+        <label class="row">
+          <span>默认整理到</span>
+          <select id="targetMode">
+            <option value="scan">当前扫描目录下</option>
+            <option value="cid">指定网盘目录（侧边栏选择）</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>根路径前缀（可选）</span>
+          <input id="targetBasePath" type="text" placeholder="例如：媒体库" />
+        </label>
+        <p class="hint">具体目标目录请在侧边栏用「选择…」浏览网盘文件夹。自定义结构请改下方路径模板，并将目录结构选为「自定义」。</p>
+      </section>
+
+      <section>
+        <h2>剧集模板</h2>
+        <label class="row">
+          <span>路径</span>
+          <input id="tvPathTemplate" type="text" />
+        </label>
+        <label class="row">
+          <span>文件名（不含扩展名规则中的路径）</span>
+          <input id="tvNameTemplate" type="text" />
+        </label>
+      </section>
+
+      <section>
+        <h2>电影模板</h2>
+        <label class="row">
+          <span>路径</span>
+          <input id="moviePathTemplate" type="text" />
+        </label>
+        <label class="row">
+          <span>文件名</span>
+          <input id="movieNameTemplate" type="text" />
+        </label>
+      </section>
+
+      <section>
+        <h2>未识别模板</h2>
+        <label class="row">
+          <span>路径</span>
+          <input id="unknownPathTemplate" type="text" />
+        </label>
+        <label class="row">
+          <span>文件名</span>
+          <input id="unknownNameTemplate" type="text" />
+        </label>
+      </section>
+
+      <div class="footer">
+        <button type="submit" class="btn primary">保存</button>
+        <button type="button" id="btnReset" class="btn">恢复默认</button>
+        <span id="msg" class="msg"></span>
+      </div>
+    </form>
+    <p class="hint">开发测试：<a id="realTestLink" href="../tools/real-test.html" target="_blank" rel="noreferrer">真实环境扫描</a></p>
+  </main>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>
