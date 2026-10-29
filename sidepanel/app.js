@@ -932,10 +932,33 @@ function syncRowFromDom(tr) {
   const row = state.rows.find((r) => r.id === id);
   if (!row) return;
   row.selected = tr.querySelector('[data-role="select"]').checked;
-  row.newName = tr.querySelector('[data-role="newName"]').value.trim();
+  const typedName = tr.querySelector('[data-role="newName"]').value.trim();
+  row.newName = typedName || row.originalName || row.newName;
   const path = tr.querySelector('[data-role="path"]').value.trim();
   row.pathDisplay = path;
   row.pathSegments = path ? path.split(/[\\/]+/).filter(Boolean) : [];
+}
+
+/** Keep subtitle/nfo names & paths aligned with parent after manual edits. */
+function syncCompanionsForParent(parent) {
+  if (!parent?.id) return;
+  const parentBase = parent.newName.includes('.')
+    ? parent.newName.slice(0, parent.newName.lastIndexOf('.'))
+    : parent.newName;
+  for (const row of state.rows.filter((r) => r.companionOf === parent.id)) {
+    const ext = row.originalName.includes('.')
+      ? row.originalName.slice(row.originalName.lastIndexOf('.'))
+      : '';
+    const stem = row.originalName.includes('.')
+      ? row.originalName.slice(0, row.originalName.lastIndexOf('.'))
+      : row.originalName;
+    const lang = stem.match(/\.(zh|zh-cn|chs|cht|en|eng|jp|jpn|sc|tc)$/i)?.[0] || '';
+    row.newName = `${parentBase}${lang}${ext}`;
+    row.pathSegments = [...(parent.pathSegments || [])];
+    row.pathDisplay = parent.pathDisplay;
+    row.kind = parent.kind;
+    row.selected = parent.selected;
+  }
 }
 
 function rowsInGroup(key) {
@@ -1095,13 +1118,16 @@ $('tbody').addEventListener('change', (e) => {
   if (role === 'select') {
     const row = state.rows.find((r) => r.id === tr.dataset.id);
     if (row && !row.companionOf) {
-      for (const c of state.rows.filter((r) => r.companionOf === row.id)) {
-        c.selected = row.selected;
-      }
-      }
+      syncCompanionsForParent(row);
       renderTable();
+    } else if (row?.companionOf) {
+      renderTable();
+    }
   } else if (role === 'newName' || role === 'path') {
+    const row = state.rows.find((r) => r.id === tr.dataset.id);
+    if (row && !row.companionOf) syncCompanionsForParent(row);
     refreshOrganizeStatus(state.rows);
+    if (row && !row.companionOf) renderTable();
   }
 });
 
@@ -1193,14 +1219,21 @@ $('btnRetryFailed').addEventListener('click', () => {
   const failed = new Set(state.lastFailedIds || []);
   if (!failed.size) return;
   for (const row of state.rows) {
-    if (row.companionOf) continue;
+    if (row.companionOf) {
+      // Failed subtitle/nfo can be retried alone without re-moving a successful parent
+      row.selected = failed.has(row.id);
+      continue;
+    }
     row.selected = failed.has(row.id);
     for (const c of state.rows.filter((r) => r.companionOf === row.id)) {
-      c.selected = row.selected;
+      if (failed.has(c.id)) c.selected = true;
+      else if (row.selected && !c.alreadyOrganized) c.selected = true;
+      else if (!failed.has(c.id)) c.selected = false;
     }
   }
+  const n = state.rows.filter((r) => r.selected).length;
   renderTable();
-  log(`已勾选上次失败 ${state.rows.filter((r) => !r.companionOf && r.selected).length} 项，可再次执行整理`, 'ok');
+  log(`已勾选上次失败 ${n} 项，可再次执行整理`, 'ok');
 });
 
 function setAllGroupsCollapsed(collapsed) {
@@ -1753,7 +1786,7 @@ async function runOrganize() {
     `将对 ${selected.length} 个文件执行重命名${moveFiles ? '并移动' : ''}。\n` +
     (moveFiles ? `输出根目录：${targetLabel}\n` : '') +
     (collisions.length ? `⚠ 有 ${collisions.length} 组目标路径/文件名冲突，可能导致互相覆盖。\n` : '') +
-    (doClean ? '完成后将清理无有效视频文件夹（广告/过小不计，进回收站）。\n' : '') +
+    (doClean ? '完成后将清理推广图/广告包等垃圾，并删除无有效视频文件夹（进回收站）。\n' : '') +
     '是否继续？',
   );
   if (!okConfirm) return;
@@ -1832,9 +1865,9 @@ async function runOrganize() {
   const failCount = results.filter((r) => !r.ok).length;
   const okIds = new Set(results.filter((r) => r.ok).map((r) => r.id));
   const failedIds = results.filter((r) => !r.ok).map((r) => r.id);
-  // Items never reported (stopped mid-way) also count as pending retry
+  // Items never reported (stopped mid-way) also count as pending retry (incl. companions)
   for (const row of selected) {
-    if (!row.companionOf && !okIds.has(row.id) && !failedIds.includes(row.id)) {
+    if (!okIds.has(row.id) && !failedIds.includes(row.id)) {
       failedIds.push(row.id);
     }
   }
@@ -1845,11 +1878,12 @@ async function runOrganize() {
       : `整理结束：成功 ${okCount}，失败 ${failCount}`,
     failedIds.length ? 'error' : 'ok',
   );
-  if (failedIds.length) log(`可点「重试失败」再次勾选 ${failedIds.length} 项`, 'info');
+  if (failedIds.length) log(`可点「重试失败」再次勾选失败项`, 'info');
 
-  // Mark succeeded rows as already organized / unselected
+  // Mark succeeded rows as already organized / unselected.
+  // Companions must succeed on their own id — parent ok must not hide a failed subtitle.
   for (const row of state.rows) {
-    if (!okIds.has(row.id) && !(row.companionOf && okIds.has(row.companionOf))) continue;
+    if (!okIds.has(row.id)) continue;
     row.alreadyOrganized = true;
     row.selected = false;
     // After move, treat current path as destination for status
@@ -1861,8 +1895,14 @@ async function runOrganize() {
   refreshOrganizeStatus(state.rows);
   afterOrganizeSmartView();
 
-  if (doClean && okCount > 0 && !aborted) {
+  // Skip auto-clean when anything failed — leftover companions may still sit in source dirs
+  if (doClean && okCount > 0 && failCount === 0 && !aborted) {
+    // 115 listing can lag right after batch move — settle then clear path cache
+    api.clearFolderCache();
+    await sleep(600);
     await runCleanup({ quietConfirm: true, reason: '整理后自动清理' });
+  } else if (doClean && failCount > 0) {
+    log('有失败项，已跳过自动清理（避免误删源目录残留字幕/文件）。可重试失败后再清，或手动点「清理空夹」。', 'info');
   }
 
   state.organizeAbort = null;
@@ -1887,7 +1927,7 @@ async function runCleanup({ quietConfirm = false, reason = '手动清理' } = {}
   if (!quietConfirm) {
     const ok = confirm(
       `将扫描目录 cid=${scanCid} 下：\n` +
-      '· 删除广告包 / 预告 / 过小视频等垃圾文件\n' +
+      '· 删除广告包 / 推广图 / 预告 / ≤30MB 无正片信号的音视频等垃圾\n' +
       '· 删除整棵子树没有有效视频的文件夹（进回收站）\n' +
       '不会删除扫描根目录本身。是否继续？',
     );
@@ -1902,6 +1942,7 @@ async function runCleanup({ quietConfirm = false, reason = '手动清理' } = {}
   const abort = new AbortController();
   state.cleanupAbort = abort;
 
+  api.clearFolderCache();
   log(`${reason}：清理垃圾文件 + 无有效视频夹（cid=${scanCid}）…`);
   setStatus('清理中…');
   $('progress').hidden = false;
