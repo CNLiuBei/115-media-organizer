@@ -9,8 +9,9 @@
 <body>
   <main>
     <header>
+      <p class="eyebrow">115 媒体整理</p>
       <h1>设置</h1>
-      <p>配置筛选规则、命名模板与元数据源。模板变量：<code>{folder}</code>（例：良医 (2017) {tmdb-71712}）<code>{title}</code> <code>{year}</code> <code>{tmdbid}</code> <code>{tmdb}</code> <code>{season}</code> <code>{episode}</code> <code>{date}</code> <code>{edition}</code> <code>{ext}</code> <code>{region}</code> <code>{part}</code></p>
+      <p>筛选、目录结构和元数据。扫描与整理仍在侧边栏完成。</p>
     </header>
 
     <form id="form">
@@ -21,14 +22,16 @@
           <input id="tmdbApiKey" type="password" autocomplete="off" placeholder="v3 API Key 或 v4 Read Access Token" />
         </label>
         <p class="hint">可选：在 <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer">TMDB API 设置</a> 申请。不填也可以，扩展会走网页搜索（国内通常可用）。</p>
-        <label class="check">
-          <input id="enableMetadata" type="checkbox" />
-          <span>默认开启 TMDB 片名校准</span>
-        </label>
-        <label class="check">
-          <input id="preferDouban" type="checkbox" />
-          <span>同时查询豆瓣作中文名补充（非官方接口，可能不稳定）</span>
-        </label>
+        <div class="checks">
+          <label class="check">
+            <input id="enableMetadata" type="checkbox" />
+            <span>默认开启 TMDB 片名校准</span>
+          </label>
+          <label class="check">
+            <input id="preferDouban" type="checkbox" />
+            <span>同时查询豆瓣作中文名补充（可能不稳定）</span>
+          </label>
+        </div>
       </section>
 
       <section>
@@ -79,6 +82,7 @@
       </section>
 
       <div id="templateSections">
+      <p class="hint template-vars">模板变量：<code>{folder}</code>（良医 (2017) {tmdb-71712}）<code>{title}</code> <code>{year}</code> <code>{tmdb}</code> <code>{season}</code> <code>{episode}</code> <code>{date}</code> <code>{edition}</code> <code>{region}</code> <code>{part}</code></p>
       <section>
         <h2>剧集模板</h2>
         <label class="row">
@@ -117,9 +121,11 @@
       </div>
 
       <div class="footer">
-        <button type="submit" class="btn primary">保存</button>
-        <button type="button" id="btnReset" class="btn">恢复默认</button>
         <span id="msg" class="msg"></span>
+        <div class="footer-actions">
+          <button type="button" id="btnReset" class="btn">恢复默认</button>
+          <button type="submit" class="btn primary">保存</button>
+        </div>
       </div>
     </form>
     <p class="hint">开发测试：<a id="realTestLink" href="../tools/real-test.html" target="_blank" rel="noreferrer">真实环境扫描</a></p>

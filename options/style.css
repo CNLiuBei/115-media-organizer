@@ -1,12 +1,15 @@
 :root {
-  --bg: #f4f7fb;
+  --bg: #f4f5f7;
   --surface: #fff;
-  --text: #1a2332;
-  --muted: #5b6b7c;
-  --line: #d7e0ea;
-  --primary: #1e78c8;
-  --radius: 12px;
-  --font: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --text: #12151a;
+  --muted: #66707c;
+  --line: #e4e7ec;
+  --primary: #0f766e;
+  --primary-hover: #0b5f59;
+  --primary-soft: #e7f4f2;
+  --radius: 14px;
+  --font: "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --focus: 0 0 0 3px rgba(15, 118, 110, 0.22);
 }
 
 * { box-sizing: border-box; }
@@ -15,30 +18,40 @@ body {
   margin: 0;
   font: 14px/1.5 var(--font);
   color: var(--text);
-  background:
-    radial-gradient(1000px 320px at 10% -20%, #d9ebff 0%, transparent 55%),
-    var(--bg);
+  background: var(--bg);
   min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
 }
 
 main {
-  max-width: 760px;
+  max-width: 720px;
   margin: 0 auto;
-  padding: 28px 18px 48px;
+  padding: 32px 20px 96px;
+}
+
+header .eyebrow {
+  margin: 0 0 6px;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
 }
 
 header h1 {
   margin: 0 0 8px;
-  font-size: 24px;
+  font-size: 28px;
+  letter-spacing: -0.03em;
+  font-weight: 650;
 }
 
 header p {
-  margin: 0 0 20px;
+  margin: 0 0 24px;
   color: var(--muted);
+  max-width: 42em;
 }
 
 code {
-  background: #eaf2fa;
+  background: var(--primary-soft);
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 12px;
@@ -48,13 +61,16 @@ section {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 16px 18px;
-  margin-bottom: 14px;
+  padding: 18px 20px;
+  margin-bottom: 12px;
 }
 
 section h2 {
-  margin: 0 0 12px;
+  margin: 0 0 14px;
   font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text);
 }
 
 .row {
@@ -69,33 +85,40 @@ section h2 {
 .row select {
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 9px 11px;
+  border-radius: 10px;
+  padding: 10px 12px;
   font: inherit;
   color: var(--text);
   background: #fff;
 }
 
-.hint {
-  margin: -4px 0 12px;
-  color: var(--muted);
-  font-size: 12px;
+.row input:focus,
+.row select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: var(--focus);
 }
 
-.hint a {
-  color: var(--primary);
+.hint {
+  margin: -2px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
+
+.hint a { color: var(--primary); }
+.template-vars { margin: 0 0 12px; }
 
 .layout-tree {
   margin: 0 0 14px;
-  padding: 10px 12px;
-  background: #f4f8fc;
+  padding: 12px 14px;
+  background: #fafbfc;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: 12px;
-  line-height: 1.45;
-  color: var(--text);
+  line-height: 1.5;
+  color: var(--muted);
   white-space: pre;
   overflow-x: auto;
 }
@@ -105,43 +128,79 @@ section h2 {
 }
 
 .checks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 18px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px 12px;
+  margin: 4px 0 8px;
 }
 
 .check {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.check:has(input:checked) {
+  border-color: transparent;
+  background: var(--primary-soft);
+}
+
+.check input {
+  accent-color: var(--primary);
 }
 
 .footer {
+  position: sticky;
+  bottom: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 12px;
   flex-wrap: wrap;
+  margin: 8px -20px -96px;
+  padding: 12px 20px 20px;
+  background: linear-gradient(180deg, transparent, var(--bg) 28%);
+}
+
+.footer-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .btn {
   border: 1px solid var(--line);
   background: #fff;
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 9px 14px;
   cursor: pointer;
   font: inherit;
+  color: var(--text);
 }
+
+.btn:hover { background: #eef0f3; }
 
 .btn.primary {
   background: var(--primary);
   border-color: var(--primary);
   color: #fff;
+  font-weight: 600;
 }
+
+.btn.primary:hover { background: var(--primary-hover); }
 
 .msg {
   color: var(--muted);
   font-size: 13px;
 }
 
-.msg.ok { color: #2a7a4b; }
+.msg.ok { color: #2f7a4f; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

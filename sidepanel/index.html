@@ -10,14 +10,14 @@
   <header class="header">
     <div class="header-main">
       <h1>115 媒体整理 <span class="ver" id="appVersion"></span></h1>
-      <p class="sub" id="statusLine">准备就绪</p>
+      <p class="status-pill" id="statusLine">准备就绪</p>
     </div>
     <a class="link" href="../options/index.html" target="_blank">设置</a>
   </header>
 
   <section class="panel scan-panel">
     <label class="field cid-field">
-      <span class="field-label">扫描目录</span>
+      <span class="field-label" id="cidFieldLabel">扫描目录</span>
       <div class="cid-row">
         <input id="cidInput" type="text" value="" placeholder="点同步读取当前目录 CID" title="目录 CID，不能为 0（网盘根目录）" />
         <button id="btnRefreshCid" class="btn" type="button" title="从当前 115 标签页重新读取">同步</button>
@@ -28,29 +28,37 @@
       <p class="hint warn-hint" id="cidRootWarn" hidden>已禁止扫描网盘根目录（cid=0）。请先在 115 进入具体文件夹后点「同步」，或从「最近」选择子目录。</p>
     </label>
 
-    <div class="check-row" role="group" aria-label="扫描选项">
-      <label class="chip" title="递归扫描子文件夹（网盘根目录不允许扫描）">
-        <input id="scanRecursive" type="checkbox" checked />
-        <span>含子文件夹</span>
-      </label>
-      <label class="chip" title="用 TMDB 把杂乱文件名校准为标准中文片名">
-        <input id="enableMeta" type="checkbox" checked />
-        <span>TMDB 校准</span>
-      </label>
-      <label class="chip" title="已在目标位置且带 tmdb id 的文件跳过网络校准">
-        <input id="skipCalibrateOrganized" type="checkbox" checked />
-        <span>跳过已在位</span>
-      </label>
-      <label class="chip" title="重命名后移动到目标路径">
-        <input id="moveFiles" type="checkbox" checked />
-        <span>移动文件</span>
-      </label>
-      <label class="chip" title="整理完成后删除推广图/广告包等垃圾，并移除无有效视频的文件夹（进回收站）">
-        <input id="cleanEmptyFolders" type="checkbox" checked />
-        <span>清理空夹</span>
-      </label>
-    </div>
-    <p class="hint meta-hint" id="metaHint" hidden>未填 API Key 时将使用 TMDB 网页搜索</p>
+    <details class="scan-options" id="scanOptions" open>
+      <summary>扫描选项</summary>
+      <div class="scan-options-body">
+        <div class="check-row" role="group" aria-label="扫描选项">
+          <label class="chip" title="递归扫描子文件夹（网盘根目录不允许扫描）">
+            <input id="scanRecursive" type="checkbox" checked />
+            <span>含子文件夹</span>
+          </label>
+          <label class="chip" title="用 TMDB 把杂乱文件名校准为标准中文片名">
+            <input id="enableMeta" type="checkbox" checked />
+            <span>TMDB 校准</span>
+          </label>
+          <label class="chip" title="已在目标位置且带 tmdb id 的文件跳过网络校准">
+            <input id="skipCalibrateOrganized" type="checkbox" checked />
+            <span>跳过已在位</span>
+          </label>
+          <label class="chip" title="重命名后移动到目标路径">
+            <input id="moveFiles" type="checkbox" checked />
+            <span>移动文件</span>
+          </label>
+          <label class="chip" title="整理完成后删除推广图/广告包等垃圾，并移除无有效视频的文件夹（进回收站）">
+            <input id="cleanEmptyFolders" type="checkbox" checked />
+            <span>整理后清理</span>
+          </label>
+        </div>
+        <p class="hint meta-hint" id="metaHint" hidden>
+          未填 API Key，将用 TMDB 网页搜索 ·
+          <a class="hint-link" href="../options/index.html" target="_blank">去设置</a>
+        </p>
+      </div>
+    </details>
 
     <details class="organize-details" id="organizeBox">
       <summary>整理目标与目录结构</summary>
@@ -94,23 +102,33 @@
   </section>
 
   <section class="panel tools-panel" id="toolsPanel" hidden>
-    <div class="actions actions-select" role="group" aria-label="勾选">
-      <span class="actions-label">勾选</span>
-      <button id="btnSelectAll" class="btn ghost" type="button" disabled>全选</button>
-      <button id="btnSelectNone" class="btn ghost" type="button" disabled>全不选</button>
-      <button id="btnSelectVisible" class="btn ghost" type="button" disabled title="只勾选当前筛选/视图下可见的作品">勾选可见</button>
-      <button id="btnSelectNeed" class="btn ghost" type="button" disabled title="勾选尚未在目标路径的文件">待整理</button>
-      <button id="btnSelectTv" class="btn ghost" type="button" disabled title="只勾选剧集">剧集</button>
-      <button id="btnSelectMovie" class="btn ghost" type="button" disabled title="只勾选电影">电影</button>
-      <button id="btnSelectLow" class="btn ghost" type="button" disabled title="勾选校准分数偏低或未识别的项">低置信</button>
-      <button id="btnRetryFailed" class="btn ghost" type="button" disabled hidden title="只勾选上次整理失败的项">重试失败</button>
-    </div>
-    <div class="actions actions-more" role="group" aria-label="列表工具">
-      <span class="actions-label">列表</span>
-      <button id="btnExpandAll" class="btn ghost" type="button" disabled title="展开全部剧集分组">展开</button>
-      <button id="btnCollapseAll" class="btn ghost" type="button" disabled title="折叠全部剧集分组">折叠</button>
-      <button id="btnRecalibrate" class="btn ghost" type="button" disabled title="仅对勾选项重新 TMDB 校准">重校准</button>
-      <button id="btnCopyPlan" class="btn ghost" type="button" disabled title="复制已选文件的目标路径清单">复制清单</button>
+    <div class="tools-row">
+      <div class="actions actions-select" role="group" aria-label="勾选">
+        <span class="actions-label">勾选</span>
+        <button id="btnSelectAll" class="btn ghost" type="button" disabled>全选</button>
+        <button id="btnSelectNone" class="btn ghost" type="button" disabled>全不选</button>
+        <button id="btnSelectVisible" class="btn ghost" type="button" disabled title="只勾选当前筛选/视图下可见的作品">可见</button>
+        <select id="selectPreset" class="select-preset" aria-label="按条件勾选" disabled>
+          <option value="">按条件…</option>
+          <option value="btnSelectNeed">待整理</option>
+          <option value="btnSelectTv">剧集</option>
+          <option value="btnSelectMovie">电影</option>
+          <option value="btnSelectLow">低置信</option>
+          <option value="btnRetryFailed" id="optSelectFailed" hidden>上次失败</option>
+        </select>
+        <button id="btnSelectNeed" class="btn ghost select-extra" type="button" disabled title="勾选尚未在目标路径的文件">待整理</button>
+        <button id="btnSelectTv" class="btn ghost select-extra" type="button" disabled title="只勾选剧集">剧集</button>
+        <button id="btnSelectMovie" class="btn ghost select-extra" type="button" disabled title="只勾选电影">电影</button>
+        <button id="btnSelectLow" class="btn ghost select-extra" type="button" disabled title="勾选校准分数偏低或未识别的项">低置信</button>
+        <button id="btnRetryFailed" class="btn ghost select-extra" type="button" disabled hidden title="只勾选上次整理失败的项">重试失败</button>
+      </div>
+      <div class="actions actions-more" role="group" aria-label="列表工具">
+        <span class="actions-label">列表</span>
+        <button id="btnExpandAll" class="btn ghost" type="button" disabled title="展开全部剧集分组">展开</button>
+        <button id="btnCollapseAll" class="btn ghost" type="button" disabled title="折叠全部剧集分组">折叠</button>
+        <button id="btnRecalibrate" class="btn ghost" type="button" disabled title="仅对勾选项重新 TMDB 校准">重校准</button>
+        <button id="btnCopyPlan" class="btn ghost" type="button" disabled title="复制已选文件的目标路径清单">复制清单</button>
+      </div>
     </div>
   </section>
 
@@ -174,13 +192,15 @@
     <p id="progressText">0 / 0</p>
   </section>
 
-  <details class="log panel" open>
+  <details class="log panel">
     <summary class="log-head">
       <strong>日志</strong>
       <button id="btnClearLog" class="btn tiny" type="button">清空</button>
     </summary>
     <pre id="log"></pre>
   </details>
+
+  <img id="posterZoom" class="poster-zoom" alt="" hidden />
 
   <script type="module" src="app.js"></script>
 </body>

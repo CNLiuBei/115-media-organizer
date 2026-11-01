@@ -55,6 +55,8 @@ const state = {
   lastFailedIds: [],
   /** Last finished scan stats, used for empty-state copy */
   lastScan: null,
+  /** cid → folder name */
+  cidNames: new Map(),
 };
 
 const UI_PREFS_KEY = 'sidepanelUiPrefs';
@@ -104,6 +106,39 @@ function fillFolderLayoutSelect() {
 function formatTargetLabel(name, cid) {
   const n = (name || '').trim() || (cid === '0' ? '根目录' : `目录 ${cid}`);
   return n;
+}
+
+/** 115 destination folder shown in preview; not part of create/move segments. */
+function targetRootLabel() {
+  if (!$('moveFiles')?.checked) return '';
+  const mode = $('targetMode')?.value === 'cid' ? 'cid' : 'scan';
+  if (mode === 'cid') {
+    const cid = $('targetCid')?.value.trim() || '0';
+    return formatTargetLabel(state.settings.targetCidName, cid);
+  }
+  const cid = $('cidInput')?.value.trim() || state.rootCid || '0';
+  if (isDriveRootCid(cid)) return '根目录';
+  return cidDisplayName(cid) || '扫描目录';
+}
+
+function fullPlanPath(rel) {
+  const root = targetRootLabel();
+  const path = String(rel || '').replace(/^\/+|\/+$/g, '');
+  if (!root) return path;
+  return path ? `${root}/${path}` : root;
+}
+
+function fullPlanFilePath(row) {
+  const dir = fullPlanPath(row?.pathDisplay);
+  const name = row?.newName || '';
+  if (!dir) return name;
+  return name ? `${dir}/${name}` : dir;
+}
+
+function planPathPrefixHtml() {
+  const root = targetRootLabel();
+  if (!root) return '';
+  return `<span class="plan-root" title="目标目录：${escapeAttr(root)}">${escapeHtml(root)}/</span>`;
 }
 
 function updateTargetCidLabel() {
@@ -159,13 +194,17 @@ function renderRecentCids(list = []) {
   sel.innerHTML = '<option value="">最近…</option>';
   for (const item of list) {
     if (!item?.cid) continue;
+    const cid = String(item.cid);
+    if (item.name) rememberCidName(cid, item.name);
+    const name = cidDisplayName(cid) || item.name;
     const opt = document.createElement('option');
-    opt.value = String(item.cid);
-    const label = item.name ? `${item.name} (${item.cid})` : `cid=${item.cid}`;
-    opt.textContent = label;
+    opt.value = cid;
+    opt.textContent = name && name !== cid ? name : `cid=${cid}`;
+    opt.title = `cid=${cid}`;
     sel.appendChild(opt);
   }
   if (cur && [...sel.options].some((o) => o.value === cur)) sel.value = cur;
+  renderCidName();
 }
 
 async function pushRecentCid(cid, name = '') {
@@ -233,8 +272,71 @@ function readOrganizeFields() {
   };
 }
 
+function rememberCidName(cid, name) {
+  const value = String(cid || '').trim();
+  const label = String(name || '').trim();
+  if (!value || value === '0' || !label || label === value) return;
+  if (/^目录 /.test(label) || label === '当前 115 目录' || label === '当前扫描目录') return;
+  state.cidNames.set(value, label);
+}
+
+function cidDisplayName(cid) {
+  const value = String(cid || '0').trim() || '0';
+  if (value === '0') return '网盘根目录';
+  return state.cidNames.get(value) || '';
+}
+
+function renderCidName() {
+  const cid = $('cidInput')?.value.trim() || '0';
+  const name = cidDisplayName(cid);
+  const label = $('cidFieldLabel');
+  if (label) label.textContent = name ? `扫描目录 · ${name}` : '扫描目录';
+  const input = $('cidInput');
+  if (input) {
+    input.title = name
+      ? `${name} · cid=${cid}`
+      : `目录 CID，不能为 0（网盘根目录）`;
+  }
+}
+
+async function fetchCidName(cid) {
+  const value = String(cid || '0').trim() || '0';
+  if (value === '0') {
+    renderCidName();
+    return '网盘根目录';
+  }
+  const cached = cidDisplayName(value);
+  if (cached) {
+    renderCidName();
+    return cached;
+  }
+  try {
+    const info = await api.getFolderInfo(value);
+    const parts = (info.path || []).filter((p) => String(p.cid) !== '0');
+    const name = (parts.length ? parts[parts.length - 1].name : info.name) || '';
+    if (name && name !== '根目录') rememberCidName(value, name);
+  } catch {
+    /* ignore */
+  }
+  renderCidName();
+  return cidDisplayName(value);
+}
+
+function syncBusyLayout() {
+  document.body.classList.toggle('is-busy', !!(state.scanning || state.running));
+}
+
 function syncResultsLayout() {
-  document.body.classList.toggle('has-results', state.rows.length > 0);
+  const has = state.rows.length > 0;
+  const was = document.body.classList.contains('has-results');
+  document.body.classList.toggle('has-results', has);
+  const opts = $('scanOptions');
+  if (opts) {
+    if (has && !was) opts.open = false;
+    if (!has && !state.scanning) opts.open = true;
+  }
+  $('btnScan')?.classList.toggle('primary', !has || state.scanning);
+  renderCidName();
 }
 
 function rebuildPlans() {
@@ -324,12 +426,15 @@ async function loadCid({ quiet = false, force = false } = {}) {
       state.rootCid = cid;
       if (force) state.cidDirty = false;
     }
+    const shown = $('cidInput').value.trim() || cid;
+    if (shown && shown !== '0' && !state.cidNames.has(shown)) fetchCidName(shown);
+    else renderCidName();
     if (!quiet) {
+      const name = cidDisplayName(shown);
       setStatus(
         isDriveRootCid(cid)
           ? '已同步到网盘根目录，已禁止扫描。请进入具体文件夹后再点同步'
-          : `已同步目录 cid=${$('cidInput').value}` +
-            (result?.source ? ` (${result.source})` : ''),
+          : `已同步 ${name || `cid=${shown}`}`,
       );
     }
     updateCidRootWarning();
@@ -472,15 +577,70 @@ function episodeRangeLabel(rows) {
   return `${eps.length} 集 · ${seasons.length} 季`;
 }
 
+function posterZoomUrl(url) {
+  const s = String(url || '');
+  if (!s) return '';
+  return s.replace(/\/t\/p\/w\d+(?:_and_h\d+_face)?/, '/t/p/w342');
+}
+
 function posterHtml(url, title, { tmdbId, kind } = {}) {
-  const img = url
-    ? `<img class="poster" src="${escapeAttr(url)}" alt="${escapeAttr(title || '')}" loading="lazy" referrerpolicy="no-referrer" />`
-    : '<div class="poster poster-empty" title="无海报"></div>';
+  if (!url) return '<div class="poster poster-empty" title="无海报"></div>';
+  const zoom = posterZoomUrl(url);
+  const img = `<img class="poster" src="${escapeAttr(url)}" data-zoom="${escapeAttr(zoom)}" alt="${escapeAttr(title || '')}" loading="lazy" referrerpolicy="no-referrer" />`;
   const tid = String(tmdbId || '').trim();
-  if (!/^\d+$/.test(tid)) return img;
-  const type = kind === 'movie' ? 'movie' : 'tv';
-  const href = `https://www.themoviedb.org/${type}/${tid}`;
-  return `<a class="poster-link" href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer" title="打开 TMDB">${img}</a>`;
+  const inner = /^\d+$/.test(tid)
+    ? `<a class="poster-link" href="${escapeAttr(`https://www.themoviedb.org/${kind === 'movie' ? 'movie' : 'tv'}/${tid}`)}" target="_blank" rel="noopener noreferrer" title="悬停放大 · 点击打开 TMDB">${img}</a>`
+    : img;
+  return `<div class="poster-wrap">${inner}</div>`;
+}
+
+let posterZoomTimer = 0;
+let posterZoomImg = null;
+
+function hidePosterZoom() {
+  clearTimeout(posterZoomTimer);
+  posterZoomTimer = 0;
+  posterZoomImg = null;
+  const el = $('posterZoom');
+  if (!el) return;
+  el.hidden = true;
+  el.removeAttribute('src');
+}
+
+function placePosterZoom(img) {
+  const el = $('posterZoom');
+  if (!el || el.hidden) return;
+  const r = img.getBoundingClientRect();
+  const pad = 8;
+  const w = el.offsetWidth || 160;
+  const h = el.offsetHeight || 240;
+  let left = r.right + pad;
+  let top = r.top;
+  if (left + w > window.innerWidth - pad) left = Math.max(pad, r.left - w - pad);
+  if (top + h > window.innerHeight - pad) top = Math.max(pad, window.innerHeight - h - pad);
+  if (top < pad) top = pad;
+  el.style.left = `${Math.round(left)}px`;
+  el.style.top = `${Math.round(top)}px`;
+}
+
+function showPosterZoom(img) {
+  const url = img?.dataset?.zoom || img?.currentSrc || img?.src;
+  const el = $('posterZoom');
+  if (!url || !el) return;
+  posterZoomImg = img;
+  el.alt = img.alt || '';
+  const onReady = () => {
+    if (posterZoomImg !== img) return;
+    el.hidden = false;
+    placePosterZoom(img);
+  };
+  if (el.src === url && el.complete && el.naturalWidth) {
+    onReady();
+    return;
+  }
+  el.onload = onReady;
+  el.src = url;
+  if (el.complete && el.naturalWidth) onReady();
 }
 
 function groupMatchesFilter(group, q) {
@@ -506,6 +666,12 @@ function groupMatchesView(group, view, collideIds) {
   if (view === 'low') return videos.some((r) => isLowConfidence(r));
   if (view === 'conflict') return videos.some((r) => collideIds.has(r.id));
   return true;
+}
+
+function countVideosInGroups(groups) {
+  let n = 0;
+  for (const g of groups || []) n += g.rows.filter((r) => !r.companionOf).length;
+  return n;
 }
 
 /** Shared list filter context for table + chips + select-visible. */
@@ -556,10 +722,8 @@ async function loadUiPrefs() {
     const data = await chrome.storage.local.get(UI_PREFS_KEY);
     const prefs = data[UI_PREFS_KEY] || {};
     if (prefs.organizeOpen) $('organizeBox').open = true;
-    if (prefs.logOpen === false) {
-      const logEl = document.querySelector('details.log');
-      if (logEl) logEl.open = false;
-    }
+    const logEl = document.querySelector('details.log');
+    if (logEl && prefs.logOpen === true) logEl.open = true;
     if (prefs.viewFilter) state.viewFilter = prefs.viewFilter;
   } catch {
     /* ignore */
@@ -582,11 +746,11 @@ function syncViewChips(ctx) {
   const collideIds = context?.collideIds || new Set();
   const hasRows = !!state.rows.length;
   const counts = {
-    all: textMatched.length,
-    need: textMatched.filter((g) => groupMatchesView(g, 'need', collideIds)).length,
-    done: textMatched.filter((g) => groupMatchesView(g, 'done', collideIds)).length,
-    low: textMatched.filter((g) => groupMatchesView(g, 'low', collideIds)).length,
-    conflict: textMatched.filter((g) => groupMatchesView(g, 'conflict', collideIds)).length,
+    all: countVideosInGroups(textMatched),
+    need: countVideosInGroups(textMatched.filter((g) => groupMatchesView(g, 'need', collideIds))),
+    done: countVideosInGroups(textMatched.filter((g) => groupMatchesView(g, 'done', collideIds))),
+    low: countVideosInGroups(textMatched.filter((g) => groupMatchesView(g, 'low', collideIds))),
+    conflict: countVideosInGroups(textMatched.filter((g) => groupMatchesView(g, 'conflict', collideIds))),
   };
   for (const btn of document.querySelectorAll('#viewFilters .view-chip')) {
     const view = btn.dataset.view;
@@ -825,6 +989,7 @@ function filterEmptyCopy(filterQ, view) {
 }
 
 function renderTable() {
+  hidePosterZoom();
   const tbody = $('tbody');
   if (!state.rows.length) {
     const empty = scanEmptyCopy();
@@ -837,6 +1002,7 @@ function renderTable() {
     $('btnSelectTv').disabled = true;
     $('btnSelectMovie').disabled = true;
     $('btnSelectLow').disabled = true;
+    if ($('selectPreset')) $('selectPreset').disabled = true;
     $('btnExpandAll').disabled = true;
     $('btnCollapseAll').disabled = true;
     $('btnRecalibrate').disabled = true;
@@ -854,21 +1020,16 @@ function renderTable() {
   $('toolsPanel').hidden = false;
   const summary = summarizeRows(state.rows);
   const listCtx = getListContext();
-  const { groups, collisions, collideIds, visibleGroups } = listCtx;
-  const already = state.rows.filter((r) => !r.companionOf && r.alreadyOrganized).length;
-  const need = state.rows.filter((r) => !r.companionOf && !r.alreadyOrganized).length;
-  const low = state.rows.filter((r) => isLowConfidence(r)).length;
+  const { groups, collideIds, visibleGroups } = listCtx;
   const selSize = selectedSizeLabel();
   $('summary').hidden = false;
   syncViewChips(listCtx);
   $('summaryText').textContent =
-    `共 ${summary.total} 项，已选 ${summary.selected}` +
+    `共 ${summary.total} 项` +
+    (groups.length ? ` · ${groups.length} 部` : '') +
+    ` · 已选 ${summary.selected}` +
     (selSize ? `（${selSize}）` : '') +
-    ` · ${groups.length} 部` +
-    (visibleGroups.length !== groups.length ? ` · 显示 ${visibleGroups.length}` : '') +
-    ` · 待整理 ${need} · 已在位 ${already}` +
-    (low ? ` · 低置信 ${low}` : '') +
-    (collisions.length ? ` · 冲突 ${collisions.length}` : '');
+    (visibleGroups.length !== groups.length ? ` · 显示 ${visibleGroups.length} 部` : '');
 
   tbody.innerHTML = '';
   if (!visibleGroups.length) {
@@ -903,7 +1064,6 @@ function renderTable() {
     ).join('');
     const metaLine = [
       range || (kind === 'movie' ? '电影' : '1 项'),
-      primary.parsed?.tmdbId ? `tmdb-${primary.parsed.tmdbId}` : '',
       groupDone ? '已在位' : '',
       groupLow ? '低置信' : '',
       dups.length ? `重复 ${dups.map((d) => d.key).join(',')}` : '',
@@ -928,28 +1088,32 @@ function renderTable() {
           ${posterHtml(poster, title, { tmdbId: primary.parsed?.tmdbId, kind })}
           <div class="group-title-block">
             <div class="group-title-row">
-              ${multi ? `<button type="button" class="group-toggle" data-role="group-toggle" data-group="${escapeAttr(group.key)}" aria-expanded="${!collapsed}">${collapsed ? '▶' : '▼'}</button>` : '<span class="group-toggle-spacer"></span>'}
-              <div class="group-title-edit">
-                <input type="text" class="group-title-input" data-role="group-title" data-group="${escapeAttr(group.key)}" value="${escapeAttr(title)}" title="修改片名后整组路径/文件名会重算" />
-                <input type="text" class="group-year-input" data-role="group-year" data-group="${escapeAttr(group.key)}" value="${escapeAttr(year)}" placeholder="年" maxlength="4" title="年份" />
-                <input type="text" class="group-tmdb-input" data-role="group-tmdbid" data-group="${escapeAttr(group.key)}" value="${escapeAttr(primary.parsed?.tmdbId || '')}" placeholder="ID" title="手动指定 TMDB ID 后回车应用" inputmode="numeric" />
-              </div>
+              ${multi ? `<button type="button" class="group-toggle" data-role="group-toggle" data-group="${escapeAttr(group.key)}" aria-expanded="${!collapsed}" aria-label="${collapsed ? '展开剧集' : '折叠剧集'}"></button>` : ''}
+              <input type="text" class="group-title-input" data-role="group-title" data-group="${escapeAttr(group.key)}" value="${escapeAttr(title)}" title="修改片名后整组路径/文件名会重算" />
+              <input type="text" class="group-year-input" data-role="group-year" data-group="${escapeAttr(group.key)}" value="${escapeAttr(year)}" placeholder="年" maxlength="4" title="年份" />
             </div>
-            <div class="kind-inline">
+            <div class="group-meta-row">
               <select class="kind-select" data-role="group-kind" data-group="${escapeAttr(group.key)}" title="切换类型并重算路径">
                 <option value="tv" ${kind === 'tv' ? 'selected' : ''}>剧集</option>
                 <option value="movie" ${kind === 'movie' ? 'selected' : ''}>电影</option>
                 <option value="unknown" ${kind === 'unknown' ? 'selected' : ''}>其他</option>
               </select>
               ${kind === 'tv' ? `<select class="region-select" data-role="group-region" data-group="${escapeAttr(group.key)}" title="覆盖地区分类">${regionOpts}</select>` : ''}
+              <label class="tmdb-inline" title="手动指定 TMDB ID 后回车应用">
+                <span>tmdb</span>
+                <input type="text" class="group-tmdb-input" data-role="group-tmdbid" data-group="${escapeAttr(group.key)}" value="${escapeAttr(primary.parsed?.tmdbId || '')}" placeholder="ID" inputmode="numeric" />
+              </label>
+              <span class="muted meta-line">${escapeHtml(metaLine)}${calib || ''}</span>
             </div>
-            <div class="muted meta-line">${escapeHtml(metaLine)}${calib || '<span class="muted"> · 未校准</span>'}</div>
           </div>
         </div>
       </td>
       <td class="col-plan">
         <div class="plan-stack">
-          <input type="text" class="plan-path" data-role="group-path" data-group="${escapeAttr(group.key)}" value="${escapeAttr(pathSample)}" ${!$('moveFiles').checked ? 'disabled' : ''} title="${escapeAttr(pathSample || '目标路径')}" placeholder="目标路径" />
+          <div class="plan-path-row">
+            ${planPathPrefixHtml()}
+            <input type="text" class="plan-path" data-role="group-path" data-group="${escapeAttr(group.key)}" value="${escapeAttr(pathSample)}" ${!$('moveFiles').checked ? 'disabled' : ''} title="${escapeAttr(fullPlanPath(pathSample) || '目标路径')}" placeholder="相对路径" />
+          </div>
           <div class="muted plan-sub">${multi ? `${videos.length} 个文件` : `<span class="plan-name-preview" title="${escapeAttr(primary.newName)}">${escapeHtml(primary.newName)}</span>`}</div>
         </div>
       </td>
@@ -981,7 +1145,10 @@ function renderTable() {
         <td class="col-plan">
           <div class="plan-stack">
             <input type="text" class="plan-name" data-role="newName" value="${escapeAttr(row.newName)}" title="${escapeAttr(row.newName)}" />
-            <input type="text" class="plan-path" data-role="path" value="${escapeAttr(row.pathDisplay)}" ${!$('moveFiles').checked ? 'disabled' : ''} title="${escapeAttr(row.pathDisplay)}" />
+            <div class="plan-path-row">
+              ${planPathPrefixHtml()}
+              <input type="text" class="plan-path" data-role="path" value="${escapeAttr(row.pathDisplay)}" ${!$('moveFiles').checked ? 'disabled' : ''} title="${escapeAttr(fullPlanPath(row.pathDisplay))}" />
+            </div>
           </div>
         </td>
     `;
@@ -997,6 +1164,7 @@ function renderTable() {
   $('btnSelectTv').disabled = false;
   $('btnSelectMovie').disabled = false;
   $('btnSelectLow').disabled = false;
+  if ($('selectPreset')) $('selectPreset').disabled = false;
   $('btnExpandAll').disabled = false;
   $('btnCollapseAll').disabled = false;
   $('btnRecalibrate').disabled = summary.selected === 0 || state.running || state.scanning;
@@ -1004,6 +1172,11 @@ function renderTable() {
   const hasFailed = (state.lastFailedIds || []).length > 0;
   $('btnRetryFailed').hidden = !hasFailed;
   $('btnRetryFailed').disabled = !hasFailed || state.running || state.scanning;
+  const failedOpt = $('optSelectFailed');
+  if (failedOpt) {
+    failedOpt.hidden = !hasFailed;
+    failedOpt.disabled = !hasFailed;
+  }
 }
 
 function escapeHtml(s) {
@@ -1230,6 +1403,24 @@ $('tbody').addEventListener('click', (e) => {
   renderTable();
 });
 
+$('tbody').addEventListener('mouseover', (e) => {
+  const img = e.target.closest('img.poster[data-zoom]');
+  if (!img) return;
+  if (e.relatedTarget && img.contains(e.relatedTarget)) return;
+  clearTimeout(posterZoomTimer);
+  posterZoomTimer = setTimeout(() => showPosterZoom(img), 80);
+});
+
+$('tbody').addEventListener('mouseout', (e) => {
+  const img = e.target.closest('img.poster[data-zoom]');
+  if (!img) return;
+  if (e.relatedTarget && img.contains(e.relatedTarget)) return;
+  hidePosterZoom();
+});
+
+document.querySelector('.table-wrap')?.addEventListener('scroll', hidePosterZoom, { passive: true });
+window.addEventListener('blur', hidePosterZoom);
+
 $('tbody').addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
   const role = e.target?.dataset?.role;
@@ -1243,6 +1434,12 @@ $('tbody').addEventListener('input', (e) => {
   const tr = e.target.closest('tr');
   if (!tr?.dataset.id) return;
   syncRowFromDom(tr);
+});
+
+$('selectPreset')?.addEventListener('change', (e) => {
+  const id = e.target.value;
+  e.target.value = '';
+  if (id) $(id)?.click();
 });
 
 $('btnSelectAll').addEventListener('click', () => {
@@ -1364,7 +1561,7 @@ $('btnRecalibrate').addEventListener('click', async () => {
 $('btnCopyPlan').addEventListener('click', async () => {
   const lines = state.rows
     .filter((r) => r.selected && !r.companionOf)
-    .map((r) => `${r.pathDisplay ? `${r.pathDisplay}/` : ''}${r.newName}`);
+    .map((r) => fullPlanFilePath(r));
   if (!lines.length) return;
   const text = lines.join('\n');
   try {
@@ -1490,6 +1687,7 @@ $('folderLayout').addEventListener('change', async () => {
 $('targetMode').addEventListener('change', async () => {
   updateTargetModeUi();
   await saveSettings(readOrganizeFields());
+  if (state.rows.length) renderTable();
 });
 
 $('targetBasePath').addEventListener('change', async () => {
@@ -1505,11 +1703,12 @@ $('targetBasePath').addEventListener('input', () => {
 $('btnUseScanAsTarget').addEventListener('click', async () => {
   const cid = $('cidInput').value.trim() || '0';
   $('targetCid').value = cid;
-  state.settings.targetCidName = cid === state.autoCid
-    ? `当前扫描目录`
-    : (cid === '0' ? '根目录' : `目录 ${cid}`);
+  state.settings.targetCidName = cid === '0'
+    ? '根目录'
+    : (cidDisplayName(cid) || (cid === state.autoCid ? '当前扫描目录' : `目录 ${cid}`));
   updateTargetCidLabel();
   await saveSettings(readOrganizeFields());
+  if (state.rows.length) renderTable();
   log(`目标目录已设为当前扫描 cid=${cid}`, 'ok');
 });
 
@@ -1536,21 +1735,30 @@ $('recentCid').addEventListener('change', () => {
   $('cidInput').value = cid;
   state.cidDirty = true;
   state.rootCid = cid;
+  renderCidName();
   updateCidRootWarning();
-  setStatus(`已选择最近目录 cid=${cid}`);
-  log(`切换到最近目录 cid=${cid}`, 'ok');
+  const name = cidDisplayName(cid);
+  setStatus(`已选择 ${name || `cid=${cid}`}`);
+  log(`切换到最近目录 ${name || cid}`, 'ok');
 });
 
 $('cidInput').addEventListener('input', () => {
   state.cidDirty = true;
   state.rootCid = $('cidInput').value.trim() || '0';
+  renderCidName();
   updateCidRootWarning();
+});
+
+$('cidInput').addEventListener('change', () => {
+  const cid = $('cidInput').value.trim();
+  if (cid && cid !== '0') fetchCidName(cid);
 });
 
 $('btnRefreshCid').addEventListener('click', async () => {
   state.cidDirty = false;
   const cid = await loadCid({ quiet: false, force: true });
-  log(cid != null ? `已从 115 页面同步 cid=${cid}` : '未能读取当前目录 cid', cid != null ? 'ok' : 'error');
+  const name = cid ? cidDisplayName(cid) : '';
+  log(cid != null ? `已从 115 页面同步 ${name || `cid=${cid}`}` : '未能读取当前目录 cid', cid != null ? 'ok' : 'error');
 });
 
 /* ---------- Folder picker ---------- */
@@ -1638,6 +1846,7 @@ async function confirmPicker() {
   updateTargetCidLabel();
   await saveSettings(readOrganizeFields());
   closeFolderPicker();
+  if (state.rows.length) renderTable();
   log(`已选择目标目录：${name} (cid=${cid})`, 'ok');
 }
 
@@ -1661,6 +1870,8 @@ function setScanningUi(scanning) {
   updateScanButtonState();
   $('btnStopScan').hidden = !scanning;
   $('btnRun').disabled = scanning || state.running || !state.rows.some((r) => r.selected);
+  syncBusyLayout();
+  $('btnScan')?.classList.toggle('primary', !state.rows.length || scanning);
 }
 
 function stopScan() {
@@ -1688,7 +1899,11 @@ async function scan() {
 
   state.rootCid = cid;
   await send('SET_CID', { cid }).catch(() => {});
-  await pushRecentCid(cid, cid === '0' ? '网盘根目录' : (cid === state.autoCid ? '当前 115 目录' : `目录 ${cid}`));
+  const folderName = cidDisplayName(cid) || await fetchCidName(cid);
+  await pushRecentCid(
+    cid,
+    cid === '0' ? '网盘根目录' : (folderName || (cid === state.autoCid ? '当前 115 目录' : `目录 ${cid}`)),
+  );
 
   const abort = new AbortController();
   state.scanAbort = abort;
@@ -1697,7 +1912,7 @@ async function scan() {
 
   setStatus('正在检查登录…');
   log(
-    `扫描目录 cid=${cid}${cid === '0' ? '（网盘根）' : ''}` +
+    `扫描目录 ${folderName || cid}${cid === '0' ? '（网盘根）' : ''}` +
     `${recursive ? '（含子文件夹）' : '（仅当前层）'}`,
   );
   setScanningUi(true);
@@ -1821,11 +2036,11 @@ async function scan() {
       const empty = scanEmptyCopy();
       setStatus(aborted ? `扫描已停止 · ${empty.title}` : empty.title);
     } else if (aborted) {
-      setStatus(`扫描已停止 · ${state.rows.length} 个媒体文件${calHint}${targetHint}`);
-      log(`已停止，可整理当前 ${state.rows.length} 项`, 'ok');
+      setStatus(`扫描已停止${calHint}`);
+      log(`已停止，可整理当前 ${state.rows.length} 项${targetHint}`, 'ok');
     } else {
-      setStatus(`扫描完成 · ${state.rows.length} 个媒体文件${calHint}${targetHint}`);
-      log(`可整理 ${state.rows.length} 项 · 结构「${FOLDER_LAYOUTS[org.folderLayout]?.label || org.folderLayout}」`, 'ok');
+      setStatus(`扫描完成${calHint}`);
+      log(`可整理 ${state.rows.length} 项 · 结构「${FOLDER_LAYOUTS[org.folderLayout]?.label || org.folderLayout}」${targetHint}`, 'ok');
     }
   } catch (err) {
     if (err?.name === 'AbortError' || /已停止/.test(err?.message || '')) {
@@ -1862,6 +2077,7 @@ function setOrganizeUi(running) {
   $('btnStopRun').hidden = !running;
   updateScanButtonState();
   $('btnClean').disabled = running || state.scanning;
+  syncBusyLayout();
 }
 
 function stopOrganize() {
@@ -1961,7 +2177,7 @@ async function runOrganize() {
         $('progressText').textContent = `${done} / ${selected.length}`;
         if (p.ok) {
           log(
-            `${p.row.originalName} → ${p.row.pathDisplay ? `${p.row.pathDisplay}/` : ''}${p.row.newName}`,
+            `${p.row.originalName} → ${fullPlanFilePath(p.row)}`,
             'ok',
           );
         }
@@ -2151,7 +2367,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
         $('cidInput').value = cid;
         state.rootCid = cid;
         updateCidRootWarning();
-        setStatus(`已同步目录 cid=${cid}`);
+        if (cid !== '0' && !state.cidNames.has(cid)) fetchCidName(cid);
+        else renderCidName();
       }
     }
   }
@@ -2193,11 +2410,13 @@ setInterval(() => {
     const login = await send('CHECK_LOGIN');
     const cid = $('cidInput').value || '0';
     updateCidRootWarning();
+    renderCidName();
+    const folder = cidDisplayName(cid);
     setStatus(
       login.loggedIn
         ? (isDriveRootCid(cid)
           ? '已登录 · 当前是网盘根目录，请进入子文件夹后点「同步」再扫描'
-          : `已登录 · 当前目录 cid=${cid}`)
+          : `已登录 · ${folder || `cid=${cid}`}`)
         : '未登录 115，请先打开 115.com',
     );
   } catch {
