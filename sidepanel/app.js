@@ -659,9 +659,11 @@ function groupKeyForRow(row) {
 }
 
 function buildRowGroups() {
-  /** @type {Map<string, { key: string, rows: object[], primary: object }>} */
+  /** @type {Map<string, { key: string, rows: object[], primary: object, videos: object[], searchBlob: string }>} */
   const map = new Map();
   const byId = new Map(state.rows.map((row) => [row.id, row]));
+  // Group key per primary row, computed once (companions reuse the parent's key)
+  const keyByRowId = new Map();
   const companions = [];
   for (const row of state.rows) {
     if (row.companionOf) {
@@ -669,15 +671,35 @@ function buildRowGroups() {
       continue;
     }
     const key = groupKeyForRow(row);
-    if (!map.has(key)) map.set(key, { key, rows: [], primary: row });
-    map.get(key).rows.push(row);
+    keyByRowId.set(row.id, key);
+    let g = map.get(key);
+    if (!g) map.set(key, (g = { key, rows: [], primary: row }));
+    g.rows.push(row);
   }
   // Attach companions after their parent episode inside the same series group
   for (const c of companions) {
     const parent = byId.get(c.companionOf);
-    const key = parent ? groupKeyForRow(parent) : groupKeyForRow(c);
-    if (!map.has(key)) map.set(key, { key, rows: [], primary: c });
-    map.get(key).rows.push(c);
+    const key = parent ? (keyByRowId.get(parent.id) || groupKeyForRow(parent)) : groupKeyForRow(c);
+    let g = map.get(key);
+    if (!g) map.set(key, (g = { key, rows: [], primary: c }));
+    g.rows.push(c);
+  }
+  // Per-group derived data, computed once and shared by filter / view / count
+  // paths (they used to re-filter and re-join per call — 5×+ per render).
+  for (const g of map.values()) {
+    g.videos = g.rows.filter((r) => !r.companionOf);
+    g.searchBlob = g.rows
+      .map((r) => [
+        r.originalName,
+        r.newName,
+        r.pathDisplay,
+        r.parsed?.title,
+        r.parsed?.pathTitle,
+        r.parsed?.tmdbId,
+        r.item?._relPath,
+      ].join(' '))
+      .join(' ')
+      .toLowerCase();
   }
   return [...map.values()];
 }
@@ -769,20 +791,12 @@ function showPosterZoom(img) {
 
 function groupMatchesFilter(group, q) {
   if (!q) return true;
-  const blob = group.rows.map((r) => [
-    r.originalName,
-    r.newName,
-    r.pathDisplay,
-    r.parsed?.title,
-    r.parsed?.pathTitle,
-    r.parsed?.tmdbId,
-    r.item?._relPath,
-  ].join(' ')).join(' ').toLowerCase();
-  return blob.includes(q);
+  // searchBlob is precomputed in buildRowGroups (was re-joined per keystroke)
+  return (group.searchBlob || '').includes(q);
 }
 
 function groupMatchesView(group, view, collideIds) {
-  const videos = group.rows.filter((r) => !r.companionOf);
+  const videos = group.videos || group.rows.filter((r) => !r.companionOf);
   if (!videos.length) return view === 'all';
   if (view === 'all') return true;
   if (view === 'need') return videos.some((r) => !r.alreadyOrganized);
@@ -794,7 +808,9 @@ function groupMatchesView(group, view, collideIds) {
 
 function countVideosInGroups(groups) {
   let n = 0;
-  for (const g of groups || []) n += g.rows.filter((r) => !r.companionOf).length;
+  for (const g of groups || []) {
+    n += g.videos ? g.videos.length : g.rows.filter((r) => !r.companionOf).length;
+  }
   return n;
 }
 
@@ -820,13 +836,13 @@ function setViewFilter(view, { force = false } = {}) {
 
 /** After organize: jump to remaining work / conflicts, collapse finished groups. */
 function afterOrganizeSmartView() {
-  for (const group of buildRowGroups()) {
-    const videos = group.rows.filter((r) => !r.companionOf);
-    if (videos.length > 1 && videos.every((r) => r.alreadyOrganized)) {
+  // Single full build (was: buildRowGroups + getListContext + renderTable's own)
+  const { groups, collisions, collideIds, textMatched } = getListContext();
+  for (const group of groups) {
+    if (group.videos.length > 1 && group.videos.every((r) => r.alreadyOrganized)) {
       state.groupCollapsed.set(group.key, true);
     }
   }
-  const { collisions, collideIds, textMatched } = getListContext();
   const needLeft = textMatched.some((g) => groupMatchesView(g, 'need', collideIds));
   const conflictLeft = collisions.length > 0
     && textMatched.some((g) => groupMatchesView(g, 'conflict', collideIds));
@@ -1194,7 +1210,7 @@ function renderTable() {
     (selSize ? `（${selSize}）` : '') +
     (visibleGroups.length !== groups.length ? ` · 显示 ${visibleGroups.length} 部` : '');
 
-  const visibleRows = visibleGroups.flatMap((g) => g.rows.filter((r) => !r.companionOf));
+  const visibleRows = visibleGroups.flatMap((g) => g.videos);
   // 已在位 items can't be checked, so they don't count towards "select all"
   const selectableRows = visibleRows.filter((r) => !r.alreadyOrganized);
   const allVisibleSelected = selectableRows.length > 0 && selectableRows.every((r) => r.selected);
@@ -1224,7 +1240,7 @@ function renderTable() {
   const frag = document.createDocumentFragment();
   for (const group of visibleGroups) {
     const primary = group.rows.find((r) => !r.companionOf) || group.rows[0];
-    const videos = group.rows.filter((r) => !r.companionOf);
+    const videos = group.videos;
     const multi = videos.length > 1;
     const collapsed = multi
       ? (state.groupCollapsed.has(group.key) ? state.groupCollapsed.get(group.key) : true)
@@ -1409,7 +1425,7 @@ function refreshSelectionUi() {
   for (const head of tbody.querySelectorAll('tr.group-head')) {
     const group = groupByKey.get(head.dataset.group);
     if (!group) continue;
-    const selectable = group.rows.filter((r) => !r.companionOf && !r.alreadyOrganized);
+    const selectable = group.videos.filter((r) => !r.alreadyOrganized);
     const allSelected = selectable.length > 0 && selectable.every((r) => r.selected);
     const someSelected = selectable.some((r) => r.selected);
     const cb = head.querySelector('[data-role="group-select"]');
@@ -1436,7 +1452,7 @@ function refreshSelectionUi() {
     cb.checked = !!row.selected;
   }
   // Master checkbox over visible rows
-  const visibleRows = visibleGroups.flatMap((g) => g.rows.filter((r) => !r.companionOf));
+  const visibleRows = visibleGroups.flatMap((g) => g.videos);
   const selectableRows = visibleRows.filter((r) => !r.alreadyOrganized);
   const allVisibleSelected = selectableRows.length > 0 && selectableRows.every((r) => r.selected);
   const someVisibleSelected = selectableRows.some((r) => r.selected);
@@ -1461,16 +1477,17 @@ function escapeAttr(s) {
   return escapeHtml(s).replace(/"/g, '&quot;');
 }
 
-function syncRowFromDom(tr) {
+function syncRowFromDom(tr, rowById) {
   const id = tr.dataset.id;
-  const row = state.rows.find((r) => r.id === id);
-  if (!row) return;
+  const row = rowById ? rowById.get(id) : state.rows.find((r) => r.id === id);
+  if (!row) return null;
   row.selected = tr.querySelector('[data-role="select"]').checked && !row.alreadyOrganized;
   const typedName = tr.querySelector('[data-role="newName"]').value.trim();
   row.newName = typedName || row.originalName || row.newName;
   const path = tr.querySelector('[data-role="path"]').value.trim();
   row.pathDisplay = path;
   row.pathSegments = path ? path.split(/[\\/]+/).filter(Boolean) : [];
+  return row;
 }
 
 /** Keep subtitle/nfo names & paths aligned with parent after manual edits. */
@@ -1698,9 +1715,9 @@ $('tbody').addEventListener('change', (e) => {
 
   const tr = e.target.closest('tr');
   if (!tr?.dataset.id) return;
-  syncRowFromDom(tr);
+  const rowMap = new Map(state.rows.map((r) => [r.id, r]));
+  const row = syncRowFromDom(tr, rowMap);
   if (role === 'select') {
-    const row = state.rows.find((r) => r.id === tr.dataset.id);
     if (row && !row.companionOf) {
       syncCompanionsForParent(row);
       refreshSelectionUi();
@@ -1708,7 +1725,6 @@ $('tbody').addEventListener('change', (e) => {
       refreshSelectionUi();
     }
   } else if (role === 'newName' || role === 'path') {
-    const row = state.rows.find((r) => r.id === tr.dataset.id);
     if (row && !row.companionOf) syncCompanionsForParent(row);
     refreshOrganizeStatus(state.rows, { sameRoot: targetRootMatchesScan() });
     if (row && !row.companionOf) renderTable();
@@ -1872,8 +1888,7 @@ $('btnRetryFailed').addEventListener('click', () => {
 
 function setAllGroupsCollapsed(collapsed) {
   for (const group of buildRowGroups()) {
-    const videos = group.rows.filter((r) => !r.companionOf);
-    if (videos.length > 1) state.groupCollapsed.set(group.key, collapsed);
+    if (group.videos.length > 1) state.groupCollapsed.set(group.key, collapsed);
   }
   renderTable();
 }
@@ -2480,8 +2495,10 @@ function stopOrganize() {
 
 async function runOrganize() {
   if (state.running || state.scanning) return;
+  // Map lookup: this loop used to be O(n²) via state.rows.find per row
+  const rowById = new Map(state.rows.map((r) => [r.id, r]));
   for (const tr of $('tbody').querySelectorAll('tr[data-id]')) {
-    syncRowFromDom(tr);
+    syncRowFromDom(tr, rowById);
   }
   const skippedDone = state.rows.filter((r) => r.selected && r.alreadyOrganized).length;
   // 已在位 = 目标名与目标路径都和现状一致，再执行只会白跑一次接口

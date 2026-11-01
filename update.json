@@ -1,5 +1,5 @@
 {
-  "version": "0.0.59",
+  "version": "0.0.60",
   "url": "https://github.com/CNLiuBei/115-media-organizer/releases",
-  "notes": "提示条新增「一键更新」：授权本地扩展目录后直接写入 GitHub 最新代码，重启浏览器生效。"
+  "notes": "性能优化：列表分组派生数据一次预计算、整理前 DOM 同步 O(n²) 降为 O(n)，大列表搜索与渲染更流畅。"
 }
