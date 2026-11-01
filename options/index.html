@@ -148,7 +148,7 @@
           <span>版本信息地址</span>
           <input id="updateCheckUrl" type="text" placeholder="https://raw.githubusercontent.com/用户名/仓库/main/update.json" />
         </label>
-        <p class="hint">指向仓库里 <code>update.json</code> 的 Raw 地址。填写后侧边栏每天打开时对比一次版本，有新版会显示提示条（更新代码仍需手动 git pull / 下载后重启浏览器）。</p>
+        <p class="hint">默认已内置本仓库 <code>update.json</code> 的地址，侧边栏每天打开时对比一次版本，有新版会显示提示条（更新代码仍需手动 git pull / 下载后重启浏览器）。清空并保存可关闭检查。</p>
         <div class="footer-actions">
           <button type="button" id="btnCheckUpdate" class="btn">立即检查</button>
         </div>
