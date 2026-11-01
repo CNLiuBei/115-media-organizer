@@ -615,7 +615,7 @@ function selectByKind(kind) {
       c.selected = row.selected;
     }
   }
-  renderTable();
+  refreshSelectionUi();
 }
 
 function parseLabel(parsed) {
@@ -1010,17 +1010,26 @@ async function runCalibration(targetRows, { signal, quiet = false } = {}) {
   if (signal?.aborted) aborted = true;
 
   let hitCount = 0;
+  // Row lookup indexes: applying hits to N ids must not scan state.rows per id
+  const rowById = new Map(state.rows.map((r) => [r.id, r]));
+  const companionsByParent = new Map();
+  for (const r of state.rows) {
+    if (!r.companionOf) continue;
+    const bucket = companionsByParent.get(r.companionOf);
+    if (bucket) bucket.push(r);
+    else companionsByParent.set(r.companionOf, [r]);
+  }
   for (const [key, { ids, parsed }] of byKey) {
     const hit = resultMap.get(key);
     if (!hit) continue;
     hitCount += 1;
     const label = parsed.searchTitle || parsed.pathTitle || parsed.title;
     for (const id of ids) {
-      const row = state.rows.find((r) => r.id === id);
+      const row = rowById.get(id);
       if (!row) continue;
       row.parsed = applyEnrichToParsed(row.parsed, hit, row.originalName);
       row.kind = row.parsed.kind;
-      for (const c of state.rows.filter((r) => r.companionOf === id)) {
+      for (const c of companionsByParent.get(id) || []) {
         c.parsed = { ...row.parsed, ext: c.parsed?.ext };
         c.kind = row.kind;
       }
@@ -1209,6 +1218,10 @@ function renderTable() {
     const empty = filterEmptyCopy(listCtx.filterQ, listCtx.view);
     tbody.innerHTML = emptyStateRow(empty.title, empty.hint);
   }
+  // Hoist per-render constants out of the row loops (DOM reads + escaping per row)
+  const moveChecked = $('moveFiles').checked;
+  const planPrefixHtml = planPathPrefixHtml();
+  const frag = document.createDocumentFragment();
   for (const group of visibleGroups) {
     const primary = group.rows.find((r) => !r.companionOf) || group.rows[0];
     const videos = group.rows.filter((r) => !r.companionOf);
@@ -1289,8 +1302,8 @@ function renderTable() {
       <td class="col-plan">
         <div class="plan-stack">
           <div class="plan-path-row">
-            ${planPathPrefixHtml()}
-            <input type="text" class="plan-path" data-role="group-path" data-group="${escapeAttr(group.key)}" value="${escapeAttr(pathSample)}" ${!$('moveFiles').checked ? 'disabled' : ''} title="${escapeAttr(fullPlanPath(pathSample) || '目标路径')}" placeholder="相对路径" />
+            ${planPrefixHtml}
+            <input type="text" class="plan-path" data-role="group-path" data-group="${escapeAttr(group.key)}" value="${escapeAttr(pathSample)}" ${!moveChecked ? 'disabled' : ''} title="${escapeAttr(fullPlanPath(pathSample) || '目标路径')}" placeholder="相对路径" />
           </div>
           <div class="muted plan-sub">${multi ? `${videos.length} 个文件` : `<span class="plan-name-preview" title="${escapeAttr(primary.newName)}">${escapeHtml(primary.newName)}</span>`}</div>
         </div>
@@ -1298,7 +1311,7 @@ function renderTable() {
     `;
     const groupCb = head.querySelector('[data-role="group-select"]');
     if (groupCb?.dataset.indeterminate) groupCb.indeterminate = true;
-    tbody.appendChild(head);
+    frag.appendChild(head);
 
     // Episode rows (sorted by S/E)
     const ordered = sortRowsByEpisode(group.rows);
@@ -1324,15 +1337,16 @@ function renderTable() {
           <div class="plan-stack">
             <input type="text" class="plan-name" data-role="newName" value="${escapeAttr(row.newName)}" title="${escapeAttr(row.newName)}" />
             <div class="plan-path-row">
-              ${planPathPrefixHtml()}
-              <input type="text" class="plan-path" data-role="path" value="${escapeAttr(row.pathDisplay)}" ${!$('moveFiles').checked ? 'disabled' : ''} title="${escapeAttr(fullPlanPath(row.pathDisplay))}" />
+              ${planPrefixHtml}
+              <input type="text" class="plan-path" data-role="path" value="${escapeAttr(row.pathDisplay)}" ${!moveChecked ? 'disabled' : ''} title="${escapeAttr(fullPlanPath(row.pathDisplay))}" />
             </div>
           </div>
         </td>
     `;
-    tbody.appendChild(tr);
+    frag.appendChild(tr);
     }
   }
+  tbody.appendChild(frag);
 
   $('btnRun').disabled = summary.selected === 0 || state.running || state.scanning;
   $('btnSelectAll').disabled = false;
@@ -1355,6 +1369,69 @@ function renderTable() {
     failedOpt.hidden = !hasFailed;
     failedOpt.disabled = !hasFailed;
   }
+}
+
+/**
+ * Light refresh for selection-only changes: sync checkboxes / summary / bar
+ * in place instead of rebuilding the whole tbody (big libraries stay snappy).
+ * Only valid when no render-relevant field besides `selected` changed.
+ */
+function refreshSelectionUi() {
+  if (!state.rows.length) {
+    renderTable();
+    return;
+  }
+  const summary = summarizeRows(state.rows);
+  const listCtx = getListContext();
+  const { groups, visibleGroups } = listCtx;
+  const selSize = selectedSizeLabel();
+  $('summaryText').textContent =
+    `共 ${summary.total} 项` +
+    (groups.length ? ` · ${groups.length} 部` : '') +
+    ` · 已选 ${summary.selected}` +
+    (selSize ? `（${selSize}）` : '') +
+    (visibleGroups.length !== groups.length ? ` · 显示 ${visibleGroups.length} 部` : '');
+  $('actionBarSummary').textContent = summary.selected
+    ? `已选 ${summary.selected} 项${selSize ? ` · ${selSize}` : ''}`
+    : `未勾选 · 共 ${summary.total} 项`;
+
+  const tbody = $('tbody');
+  const groupByKey = new Map(listCtx.groups.map((g) => [g.key, g]));
+  // Group head checkboxes
+  for (const head of tbody.querySelectorAll('tr.group-head')) {
+    const group = groupByKey.get(head.dataset.group);
+    if (!group) continue;
+    const selectable = group.rows.filter((r) => !r.companionOf && !r.alreadyOrganized);
+    const allSelected = selectable.length > 0 && selectable.every((r) => r.selected);
+    const someSelected = selectable.some((r) => r.selected);
+    const cb = head.querySelector('[data-role="group-select"]');
+    if (cb) {
+      cb.checked = allSelected;
+      cb.indeterminate = !allSelected && someSelected;
+    }
+  }
+  // Row checkboxes (companions follow their parent's selection)
+  const rowsById = new Map(state.rows.map((r) => [String(r.id), r]));
+  for (const tr of tbody.querySelectorAll('tr.group-child')) {
+    const row = rowsById.get(String(tr.dataset.id));
+    if (!row) continue;
+    const cb = tr.querySelector('input[data-role="select"]');
+    if (!cb || cb.disabled) continue;
+    cb.checked = !!row.selected;
+  }
+  // Master checkbox over visible rows
+  const visibleRows = visibleGroups.flatMap((g) => g.rows.filter((r) => !r.companionOf));
+  const selectableRows = visibleRows.filter((r) => !r.alreadyOrganized);
+  const allVisibleSelected = selectableRows.length > 0 && selectableRows.every((r) => r.selected);
+  const someVisibleSelected = selectableRows.some((r) => r.selected);
+  const checkAll = $('checkAllVisible');
+  if (checkAll) {
+    checkAll.checked = allVisibleSelected;
+    checkAll.indeterminate = !allVisibleSelected && someVisibleSelected;
+  }
+  $('btnRun').disabled = summary.selected === 0 || state.running || state.scanning;
+  $('btnRecalibrate').disabled = summary.selected === 0 || state.running || state.scanning;
+  $('btnCopyPlan').disabled = summary.selected === 0;
 }
 
 function escapeHtml(s) {
@@ -1511,7 +1588,7 @@ $('tbody').addEventListener('change', (e) => {
     const key = e.target.dataset.group;
     const on = e.target.checked;
     for (const row of rowsInGroup(key)) row.selected = on && !row.alreadyOrganized;
-    renderTable();
+    refreshSelectionUi();
     return;
   }
 
@@ -1610,9 +1687,9 @@ $('tbody').addEventListener('change', (e) => {
     const row = state.rows.find((r) => r.id === tr.dataset.id);
     if (row && !row.companionOf) {
       syncCompanionsForParent(row);
-      renderTable();
+      refreshSelectionUi();
     } else if (row?.companionOf) {
-      renderTable();
+      refreshSelectionUi();
     }
   } else if (role === 'newName' || role === 'path') {
     const row = state.rows.find((r) => r.id === tr.dataset.id);
@@ -1672,12 +1749,12 @@ $('selectPreset')?.addEventListener('change', (e) => {
 
 $('btnSelectAll').addEventListener('click', () => {
   state.rows.forEach((r) => { r.selected = !r.alreadyOrganized; });
-  renderTable();
+  refreshSelectionUi();
 });
 
 $('btnSelectNone').addEventListener('click', () => {
   state.rows.forEach((r) => { r.selected = false; });
-  renderTable();
+  refreshSelectionUi();
 });
 
 $('btnSelectVisible').addEventListener('click', () => {
@@ -1693,7 +1770,7 @@ $('btnSelectVisible').addEventListener('click', () => {
       c.selected = row.selected;
     }
   }
-  renderTable();
+  refreshSelectionUi();
   log(`已勾选可见 ${state.rows.filter((r) => !r.companionOf && r.selected).length} 项`, 'ok');
 });
 
@@ -1712,7 +1789,7 @@ function setVisibleSelection(selected) {
       c.selected = row.selected;
     }
   }
-  renderTable();
+  refreshSelectionUi();
 }
 
 $('checkAllVisible')?.addEventListener('change', (e) => {
@@ -1728,7 +1805,7 @@ $('btnSelectNeed').addEventListener('click', () => {
       c.selected = row.selected;
     }
   }
-  renderTable();
+  refreshSelectionUi();
   log(`已勾选待整理 ${state.rows.filter((r) => !r.companionOf && r.selected).length} 项`, 'ok');
 });
 
@@ -1751,7 +1828,7 @@ $('btnSelectLow').addEventListener('click', () => {
       c.selected = row.selected;
     }
   }
-  renderTable();
+  refreshSelectionUi();
   log(`已勾选低置信 ${state.rows.filter((r) => !r.companionOf && r.selected).length} 项`, 'ok');
 });
 
@@ -1773,7 +1850,7 @@ $('btnRetryFailed').addEventListener('click', () => {
     }
   }
   const n = state.rows.filter((r) => r.selected).length;
-  renderTable();
+  refreshSelectionUi();
   log(`已勾选上次失败 ${n} 项，可再次执行整理`, 'ok');
 });
 

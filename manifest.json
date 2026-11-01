@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "115 媒体整理",
-  "version": "0.0.52",
+  "version": "0.0.53",
   "minimum_chrome_version": "114",
   "description": "在 115 网盘中扫描、解析、TMDB 片名校准并批量整理媒体文件",
   "icons": {
