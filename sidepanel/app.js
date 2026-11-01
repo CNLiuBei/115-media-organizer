@@ -1731,13 +1731,31 @@ $('tbody').addEventListener('change', (e) => {
   }
 });
 
+/**
+ * Flip one group's collapsed state in the existing DOM (no full re-render).
+ * Rows for the group are always present — collapse only toggles classes —
+ * so this is O(rows-in-group) instead of rebuilding the whole table.
+ */
+function setGroupDomCollapsed(key, collapsed) {
+  for (const tr of $('tbody').querySelectorAll(`tr[data-group="${CSS.escape(key)}"]`)) {
+    if (tr.classList.contains('group-head')) {
+      tr.classList.toggle('is-collapsed', collapsed);
+      const btn = tr.querySelector('[data-role="group-toggle"]');
+      if (btn) btn.setAttribute('aria-expanded', String(!collapsed));
+    } else {
+      tr.classList.toggle('is-hidden', collapsed);
+    }
+  }
+}
+
 $('tbody').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-role="group-toggle"]');
   if (!btn) return;
   const key = btn.dataset.group;
   const cur = state.groupCollapsed.has(key) ? state.groupCollapsed.get(key) : true;
-  state.groupCollapsed.set(key, !cur);
-  renderTable();
+  const next = !cur;
+  state.groupCollapsed.set(key, next);
+  setGroupDomCollapsed(key, next);
 });
 
 $('tbody').addEventListener('mouseover', (e) => {
@@ -1887,10 +1905,16 @@ $('btnRetryFailed').addEventListener('click', () => {
 });
 
 function setAllGroupsCollapsed(collapsed) {
-  for (const group of buildRowGroups()) {
-    if (group.videos.length > 1) state.groupCollapsed.set(group.key, collapsed);
+  // One DOM pass: a group is "multi" iff it has child rows. No buildRowGroups(),
+  // no renderTable() — expanding/collapsing must not rebuild a big table.
+  const multiKeys = new Set();
+  for (const tr of $('tbody').querySelectorAll('tr.group-child')) {
+    multiKeys.add(tr.dataset.group);
   }
-  renderTable();
+  for (const key of multiKeys) {
+    state.groupCollapsed.set(key, collapsed);
+    setGroupDomCollapsed(key, collapsed);
+  }
 }
 
 $('btnExpandAll').addEventListener('click', () => setAllGroupsCollapsed(false));

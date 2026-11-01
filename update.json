@@ -1,5 +1,5 @@
 {
-  "version": "0.0.60",
+  "version": "0.0.61",
   "url": "https://github.com/CNLiuBei/115-media-organizer/releases",
-  "notes": "性能优化：列表分组派生数据一次预计算、整理前 DOM 同步 O(n²) 降为 O(n)，大列表搜索与渲染更流畅。"
+  "notes": "性能优化：展开/折叠剧集组改为直接切换 DOM class，不再整表重渲染，大列表点击折叠箭头即时响应。"
 }
