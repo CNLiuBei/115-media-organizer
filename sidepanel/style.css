@@ -75,6 +75,16 @@ button, input, select {
   color: var(--muted);
   letter-spacing: 0;
   font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 1px 4px;
+}
+
+.header .ver:hover,
+.header .ver:focus-visible {
+  color: var(--text);
+  background: var(--line-soft);
+  outline: none;
 }
 
 .status-pill {

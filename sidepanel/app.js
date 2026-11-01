@@ -2827,7 +2827,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') loadCid({ quiet: false, force: !state.cidDirty });
+  if (document.visibilityState === 'visible') {
+    loadCid({ quiet: false, force: !state.cidDirty });
+    // 长开的侧边栏在窗口重新可见时复查更新（内部有 24h 节流）
+    checkForUpdate();
+  }
 });
 
 window.addEventListener('focus', () => {
@@ -2878,27 +2882,63 @@ $('updateBannerClose')?.addEventListener('click', async () => {
 
 async function checkForUpdate({ force = false } = {}) {
   const url = String(state.settings.updateCheckUrl || '').trim();
-  if (!/^https?:\/\//i.test(url)) return;
+  if (!/^https?:\/\//i.test(url)) return { status: 'disabled' };
   try {
     const store = await chrome.storage.local.get(['lastUpdateCheckAt', 'dismissedUpdateVersion']);
-    if (!force && Date.now() - (store.lastUpdateCheckAt || 0) < UPDATE_CHECK_INTERVAL_MS) return;
+    if (!force && Date.now() - (store.lastUpdateCheckAt || 0) < UPDATE_CHECK_INTERVAL_MS) {
+      return { status: 'skipped' };
+    }
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 8000);
     const res = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
     clearTimeout(timer);
-    if (!res.ok) return;
+    if (!res.ok) return { status: 'error', error: new Error(`HTTP ${res.status}`) };
     const info = await res.json();
     await chrome.storage.local.set({ lastUpdateCheckAt: Date.now() });
     const remote = String(info?.version || '').trim();
-    if (!remote) return;
+    if (!remote) return { status: 'error', error: new Error('返回的 JSON 缺少 version 字段') };
     const local = chrome.runtime.getManifest().version;
-    if (cmpVersion(remote, local) > 0 && store.dismissedUpdateVersion !== remote) {
-      showUpdateBanner(remote, info.url, info.notes);
+    if (cmpVersion(remote, local) > 0) {
+      // force（点击版本号）时忽略 dismissed 标记，用户主动要看
+      if (force || store.dismissedUpdateVersion !== remote) {
+        showUpdateBanner(remote, info.url, info.notes);
+      }
+      return { status: 'available', version: remote };
     }
-  } catch {
-    /* silent: update check must never disturb normal usage */
+    return { status: 'latest', version: remote };
+  } catch (err) {
+    // silent for background checks; force callers read the error from the result
+    return { status: 'error', error: err };
   }
 }
+
+// 点击侧边栏版本号 → 立即检查更新（结果写入状态行与日志）
+const onVersionClick = async () => {
+  setStatus('正在检查更新…');
+  const r = await checkForUpdate({ force: true });
+  if (r.status === 'available') {
+    setStatus(`发现新版本 v${r.version}`);
+    log(`发现新版本 v${r.version}，可点提示条中的「下载」前往发布页`, 'info');
+  } else if (r.status === 'latest') {
+    setStatus(`已是最新版本 v${r.version}`);
+    log(`已是最新版本 v${r.version}`, 'ok');
+  } else if (r.status === 'disabled') {
+    setStatus('未配置版本检查地址');
+  } else if (r.status === 'error') {
+    setStatus('检查更新失败');
+    log(`检查更新失败：${r.error?.message || r.error || '未知错误'}`, 'error');
+  } else {
+    setStatus('准备就绪');
+  }
+};
+
+$('appVersion')?.addEventListener('click', onVersionClick);
+$('appVersion')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    onVersionClick();
+  }
+});
 
 (async function init() {
   try {
