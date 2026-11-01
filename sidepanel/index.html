@@ -44,14 +44,6 @@
             <input id="skipCalibrateOrganized" type="checkbox" checked />
             <span>跳过已在位</span>
           </label>
-          <label class="chip" title="重命名后移动到目标路径">
-            <input id="moveFiles" type="checkbox" checked />
-            <span>移动文件</span>
-          </label>
-          <label class="chip" title="整理完成后删除推广图/广告包等垃圾，并移除无有效视频的文件夹（进回收站）">
-            <input id="cleanEmptyFolders" type="checkbox" checked />
-            <span>整理后清理</span>
-          </label>
         </div>
         <p class="hint meta-hint" id="metaHint" hidden>
           未填 API Key，将用 TMDB 网页搜索 ·
@@ -59,6 +51,18 @@
         </p>
       </div>
     </details>
+
+    <div class="behavior-row" role="group" aria-label="整理行为">
+      <span class="actions-label">整理</span>
+      <label class="chip" title="重命名后移动到目标路径；关闭则只重命名">
+        <input id="moveFiles" type="checkbox" checked />
+        <span>移动文件</span>
+      </label>
+      <label class="chip" title="整理完成后删除推广图/广告包等垃圾，并移除无有效视频的文件夹（进回收站）">
+        <input id="cleanEmptyFolders" type="checkbox" checked />
+        <span>整理后清理</span>
+      </label>
+    </div>
 
     <details class="organize-details" id="organizeBox">
       <summary>整理目标与目录结构</summary>
@@ -93,11 +97,10 @@
     </details>
 
     <div class="actions actions-primary">
-      <button id="btnScan" class="btn primary" type="button">扫描</button>
+      <button id="btnScan" class="btn primary" type="button">扫描目录</button>
       <button id="btnStopScan" class="btn warn" type="button" hidden>停止扫描</button>
-      <button id="btnRun" class="btn danger" type="button" disabled>执行整理</button>
-      <button id="btnStopRun" class="btn warn" type="button" hidden>停止整理</button>
-      <button id="btnClean" class="btn" type="button" title="扫描当前目录：先删推广图/广告包等垃圾，再删无有效视频的子文件夹">清理空夹</button>
+      <span class="actions-spacer"></span>
+      <button id="btnClean" class="btn ghost danger-text" type="button" title="扫描当前目录：先删推广图/广告包等垃圾，再删无有效视频的子文件夹（会先确认）">清理空夹…</button>
     </div>
   </section>
 
@@ -156,14 +159,14 @@
   <section class="summary" id="summary" hidden>
     <div class="summary-row">
       <span id="summaryText"></span>
-      <input id="tableFilter" type="search" placeholder="筛选…  /" autocomplete="off" title="快捷键 /" />
+      <input id="tableFilter" type="search" placeholder="筛选片名/文件…" autocomplete="off" title="快捷键 / 聚焦搜索，Esc 清空" />
     </div>
     <div class="view-filters" id="viewFilters" role="tablist" aria-label="列表筛选">
-      <button type="button" class="view-chip is-active" data-view="all" title="快捷键 1 · 双击勾选可见">全部<span class="view-count" hidden>0</span></button>
-      <button type="button" class="view-chip" data-view="need" title="快捷键 2 · 双击勾选可见">待整理<span class="view-count" hidden>0</span></button>
-      <button type="button" class="view-chip" data-view="done" title="快捷键 3 · 双击勾选可见">已在位<span class="view-count" hidden>0</span></button>
-      <button type="button" class="view-chip" data-view="low" title="快捷键 4 · 双击勾选可见">低置信<span class="view-count" hidden>0</span></button>
-      <button type="button" class="view-chip" data-view="conflict" title="快捷键 5 · 双击勾选可见">冲突<span class="view-count" hidden>0</span></button>
+      <button type="button" class="view-chip is-active" data-view="all" title="快捷键 1 · 双击勾选该视图全部作品">全部<span class="view-count" hidden>0</span></button>
+      <button type="button" class="view-chip" data-view="need" title="快捷键 2 · 双击勾选该视图全部作品">待整理<span class="view-count" hidden>0</span></button>
+      <button type="button" class="view-chip" data-view="done" title="快捷键 3 · 双击勾选该视图全部作品">已在位<span class="view-count" hidden>0</span></button>
+      <button type="button" class="view-chip" data-view="low" title="快捷键 4 · 双击勾选该视图全部作品">低置信<span class="view-count" hidden>0</span></button>
+      <button type="button" class="view-chip" data-view="conflict" title="快捷键 5 · 双击勾选该视图全部作品">冲突<span class="view-count" hidden>0</span></button>
     </div>
   </section>
 
@@ -171,7 +174,7 @@
     <table>
       <thead>
         <tr>
-          <th class="col-check"></th>
+          <th class="col-check"><input id="checkAllVisible" type="checkbox" aria-label="勾选当前筛选下可见的作品" title="勾选当前筛选/视图下可见的作品" /></th>
           <th class="col-work">作品</th>
           <th class="col-plan">整理预览</th>
         </tr>
@@ -180,17 +183,27 @@
         <tr class="empty"><td colspan="3">
           <div class="empty-state">
             <strong>还没有扫描结果</strong>
-            <p>确认上方目录 CID 后点「扫描」。可先展开「整理目标」选择输出结构。</p>
+            <p>确认上方目录 CID 后点「扫描目录」。扫描后可校对片名与路径，再点底部「执行整理」。</p>
           </div>
         </td></tr>
       </tbody>
     </table>
   </section>
 
-  <section class="progress" id="progress" hidden>
-    <div class="bar"><div class="bar-fill" id="barFill"></div></div>
-    <p id="progressText">0 / 0</p>
-  </section>
+  <div class="action-dock">
+    <section class="progress" id="progress" hidden>
+      <div class="bar" id="progressBar"><div class="bar-fill" id="barFill"></div></div>
+      <div class="progress-meta">
+        <p id="progressText">准备中…</p>
+        <span class="progress-pct" id="progressPct">0%</span>
+      </div>
+    </section>
+    <div class="action-bar" id="actionBar" hidden>
+      <span class="action-summary" id="actionBarSummary">已选 0 项</span>
+      <button id="btnRun" class="btn primary" type="button" disabled>执行整理</button>
+      <button id="btnStopRun" class="btn warn" type="button" hidden>停止整理</button>
+    </div>
+  </div>
 
   <details class="log panel">
     <summary class="log-head">

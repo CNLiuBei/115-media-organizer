@@ -29,6 +29,26 @@ const checks = [
 
 const selects = ['folderLayout', 'targetMode'];
 
+const form = document.getElementById('form');
+const msgEl = document.getElementById('msg');
+let dirty = false;
+
+function setMsg(text, kind = '') {
+  msgEl.textContent = text;
+  msgEl.className = `msg${kind ? ` ${kind}` : ''}`;
+}
+
+function markDirty() {
+  if (dirty) return;
+  dirty = true;
+  setMsg('有未保存的更改', 'warn');
+}
+
+function markClean(text = '已保存') {
+  dirty = false;
+  setMsg(text, 'ok');
+}
+
 function fillFolderLayoutSelect() {
   const sel = document.getElementById('folderLayout');
   sel.innerHTML = '';
@@ -97,6 +117,9 @@ async function load() {
 
 document.getElementById('folderLayout').addEventListener('change', updateFolderLayoutHint);
 
+form.addEventListener('input', markDirty);
+form.addEventListener('change', markDirty);
+
 for (const id of [
   'tvPathTemplate', 'tvNameTemplate',
   'moviePathTemplate', 'movieNameTemplate',
@@ -106,24 +129,46 @@ for (const id of [
   document.getElementById(id)?.addEventListener('input', updateFolderLayoutHint);
 }
 
-document.getElementById('form').addEventListener('submit', async (e) => {
+form.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const stored = await chrome.storage.sync.get(STORAGE_KEYS.settings);
-  const prev = stored[STORAGE_KEYS.settings] || {};
-  // Preserve sidepanel-selected targetCid / targetCidName
-  const settings = read(prev);
-  await chrome.storage.sync.set({ [STORAGE_KEYS.settings]: settings });
-  const msg = document.getElementById('msg');
-  msg.textContent = '已保存';
-  msg.className = 'msg ok';
+  const saveBtn = form.querySelector('button[type="submit"]');
+  if (saveBtn) saveBtn.disabled = true;
+  try {
+    const stored = await chrome.storage.sync.get(STORAGE_KEYS.settings);
+    const prev = stored[STORAGE_KEYS.settings] || {};
+    // Preserve sidepanel-selected targetCid / targetCidName
+    const settings = read(prev);
+    await chrome.storage.sync.set({ [STORAGE_KEYS.settings]: settings });
+    markClean('已保存');
+  } catch (err) {
+    setMsg(`保存失败：${err.message || err}`, 'warn');
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
 });
 
 document.getElementById('btnReset').addEventListener('click', async () => {
+  if (!confirm('恢复默认设置并立即保存？当前自定义目录模板会被覆盖。')) return;
   fill(DEFAULT_SETTINGS);
   await chrome.storage.sync.set({ [STORAGE_KEYS.settings]: { ...DEFAULT_SETTINGS } });
-  const msg = document.getElementById('msg');
-  msg.textContent = '已恢复默认并保存';
-  msg.className = 'msg ok';
+  markClean('已恢复默认并保存');
+});
+
+document.getElementById('btnOpenSidePanel')?.addEventListener('click', async () => {
+  try {
+    if (!chrome.sidePanel?.open) throw new Error('当前 Chrome 不支持');
+    const win = await chrome.windows.getLastFocused();
+    await chrome.sidePanel.open({ windowId: win.id });
+    setMsg('已打开侧边栏', 'ok');
+  } catch {
+    setMsg('无法直接打开：请点浏览器工具栏的扩展图标', 'warn');
+  }
+});
+
+window.addEventListener('beforeunload', (e) => {
+  if (!dirty) return;
+  e.preventDefault();
+  e.returnValue = '';
 });
 
 load();

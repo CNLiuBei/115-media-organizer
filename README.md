@@ -46,24 +46,26 @@ Chrome / Edge Manifest V3 浏览器扩展：在已登录的 [115 网盘](https:/
 | 最小体积 | 默认 50MB，降低样本片误伤 |
 | 扫描/校准间隔 | 默认约 200ms；整理为批量请求，批次间隔很短 |
 | 清理无视频夹 | 移动整理后删除扫描目录下已无视频的残留文件夹 |
-| 目录结构 | **视频库（地区分类）** / 大陆→电视剧 / 标准 / 按类型 / Jellyfin / 自定义；剧集支持 `{region}` |
+| 目录结构 | **Emby 标准** / Emby (English) / 视频库（按地区） / 视频库（大陆→电视剧） / 无类型根目录 / 仅按片名 / 自定义；剧集支持 `{region}` |
 | 整理到 | 扫描目录下，或指定网盘目录（侧边栏浏览选择） |
 | 根路径前缀 | 可选，加在布局路径前，如 `媒体库` |
-| 路径/文件名模板 | `{title}` `{year}` `{season}` `{episode}` `{season:02d}` `{episode:02d}` `{ext}` `{region}` `{part}` |
+| 路径/文件名模板 | `{title}` `{year}` `{season}` `{episode}` `{season:02d}` `{episode:02d}` `{ext}` `{region}` `{part}` `{date}` `{edition}` |
 
-默认「视频库（地区分类）」对齐你的网盘结构（整理目标选 **视频**）：
+默认「Emby 标准」：
 
-- 剧集：`剧集/{region}/剧名 (年) {tmdb-id}/Season {season}`（例：`良医 (2017) {tmdb-71712}`）
+- 剧集：`剧集/剧名 (年) {tmdb-id}/Season {season:02d}`（例：`良医 (2017) {tmdb-71712}`）
 - 电影：`电影/片名 (年) {tmdb-id}`
 - 再次扫描时会从目录名识别年份与 TMDB ID，避免重查错剧
 - `{region}`：`大陆剧` / `港台剧` / `日韩剧` / `欧美剧` / `动漫` / `其他剧集`（由文件名、已有路径、可选 TMDB 产地推断）
 
-另有「视频库（大陆→电视剧）」：大陆剧进 `电视剧/`，其余仍进 `剧集/{region}/`。
+「视频库（按地区）」会把剧集放在 `剧集/{region}/剧名 (年) {tmdb-id}/Season {season:02d}`；
+「视频库（大陆→电视剧）」则把大陆剧放进 `电视剧/`，其余仍进 `剧集/{region}/`。
 
 ## 权限说明
 
-- 读取 115 Cookie，调用 `webapi.115.com` 管理你自己的文件
-- 可选访问 TMDB / 豆瓣搜索接口做元数据匹配
+- `sidePanel`：打开侧边栏；`storage`：保存设置与 CID；`tabs`：定位当前 115 标签页并读取目录 CID
+- `host_permissions` 仅包含 115 网页与接口（`webapi.115.com`）、TMDB、豆瓣电影搜索
+- 使用你登录 115 后的 Cookie（由浏览器随请求自动携带；扩展不读取、不存储 Cookie 内容）
 - **不上传、不存储账号密码**
 
 ## 目录结构
@@ -71,11 +73,12 @@ Chrome / Edge Manifest V3 浏览器扩展：在已登录的 [115 网盘](https:/
 ```
 manifest.json
 background/service-worker.js
-content/injector.js
-sidepanel/
-options/
-lib/          # api115 / parser / region / filter / rename / organizer / metadata
+content/          # injector.js / injector.css（115 页面入口）
+sidepanel/        # index.html / app.js / style.css
+options/          # 设置页
+lib/              # api115 / parser / region / filter / rename / organizer / metadata
 icons/
+tools/            # 仅开发用：node 自测脚本
 ```
 
 ## 注意

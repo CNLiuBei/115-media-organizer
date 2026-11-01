@@ -91,6 +91,22 @@ button, input, select {
   letter-spacing: 0.01em;
 }
 
+body.is-busy .status-pill::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  flex: 0 0 auto;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: status-spin 0.8s linear infinite;
+}
+
+@keyframes status-spin {
+  to { transform: rotate(360deg); }
+}
+
 .link {
   color: var(--muted);
   text-decoration: none;
@@ -427,6 +443,27 @@ body.has-results:not(.is-busy) .status-pill {
   gap: 8px;
 }
 
+.actions-spacer {
+  flex: 1 1 auto;
+}
+
+.behavior-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.btn.ghost.danger-text {
+  color: var(--danger);
+}
+
+.btn.ghost.danger-text:hover:not(:disabled) {
+  background: #fdecea;
+  color: var(--danger-hover);
+}
+
 .actions-primary .btn.primary,
 .actions-primary .btn.danger {
   min-width: 84px;
@@ -629,6 +666,64 @@ body.has-results:not(.is-busy) .status-pill {
   display: none !important;
 }
 
+body.has-results {
+  padding-bottom: 80px;
+}
+
+/* Busy or showing the progress card → leave room for the dock */
+body.is-busy,
+body.has-results.has-progress {
+  padding-bottom: 122px;
+}
+
+/* ---------- Action dock ---------- */
+
+.action-dock {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 6;
+  display: grid;
+  gap: 6px;
+}
+
+.action-dock .progress {
+  position: static;
+  z-index: auto;
+}
+
+.action-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 8px 24px rgba(18, 21, 26, 0.14);
+  backdrop-filter: blur(8px);
+}
+
+.action-bar[hidden] {
+  display: none !important;
+}
+
+.action-summary {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#btnRun {
+  min-width: 88px;
+}
+
 /* ---------- Table ---------- */
 
 .table-wrap {
@@ -669,6 +764,33 @@ th {
   padding-left: 10px;
   padding-right: 0;
   vertical-align: middle;
+}
+
+#checkAllVisible {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--primary);
+}
+
+td.col-check input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--primary);
+}
+
+/* 已在位 → 不可再勾选 */
+td.col-check input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+#checkAllVisible:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 .col-work { width: 58%; overflow: hidden; }
 .col-plan { width: 42%; overflow: hidden; }
@@ -786,6 +908,12 @@ th {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.calib-hint {
+  margin-left: 4px;
+  color: var(--muted);
+  opacity: .85;
+  font-size: 10px;
+}
 .group-head.is-done,
 .group-child.is-done {
   background: #f3f8f5;
@@ -793,6 +921,13 @@ th {
 .group-head.is-low,
 .group-child.is-low {
   background: #fff8ee;
+}
+.group-child:hover {
+  background: #f7faf9;
+}
+.group-head:has(> td.col-check input:checked),
+.group-child:has(> td.col-check input:checked) {
+  background: #eef7f5;
 }
 .group-head.is-dup,
 .group-child.is-dup {
@@ -1023,9 +1158,19 @@ tr.empty td {
 
 /* ---------- Progress / log ---------- */
 
-.progress { padding: 8px 12px; }
+.progress {
+  display: grid;
+  gap: 6px;
+  padding: 8px 12px;
+}
+
+/* display:grid above would win over the UA [hidden] rule */
+.progress[hidden] {
+  display: none !important;
+}
 
 .progress .bar {
+  position: relative;
   height: 5px;
   background: var(--line-soft);
   border-radius: 999px;
@@ -1036,13 +1181,45 @@ tr.empty td {
   height: 100%;
   width: 0%;
   background: var(--primary);
-  transition: width 0.2s ease;
+  border-radius: inherit;
+  transition: width 0.25s ease;
+}
+
+/* Unknown-total phase (tree scan): a moving segment instead of a fake 100% */
+.progress .bar.is-indeterminate .bar-fill {
+  width: 38% !important;
+  transition: none;
+  animation: bar-slide 1.15s ease-in-out infinite;
+}
+
+@keyframes bar-slide {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(270%); }
+}
+
+.progress-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
 #progressText {
-  margin: 6px 0 0;
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--muted);
   font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.progress-pct {
+  flex: 0 0 auto;
+  color: var(--primary-hover);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .log {
@@ -1258,5 +1435,6 @@ tr.empty td {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     transition: none !important;
+    animation: none !important;
   }
 }

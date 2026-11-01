@@ -1,4 +1,6 @@
 (function () {
+  // 只在 115 顶层页面运行：iframe 不注入按钮，也不回写 cid（避免多帧抢写）
+  if (window.top !== window) return;
   const BTN_ID = 'x115-media-organize-btn';
   const FAB_ID = 'x115-media-organize-fab';
   let lastHref = location.href;
@@ -273,7 +275,7 @@
       if (message?.type === 'REQUEST_CID') {
         const cid = readCidFromPage();
         if (cid != null) {
-          notifyCid(cid, true);
+          // 由 background 负责持久化，这里不重复 SET_CID（避免每次刷新都写 storage）
           sendResponse({ ok: true, cid });
         } else {
           // Unknown — let background keep previous storage cid

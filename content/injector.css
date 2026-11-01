@@ -22,6 +22,13 @@
   background: #0b5f59;
 }
 
+#x115-media-organize-btn:focus-visible,
+#x115-media-organize-fab:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.4);
+}
+
 #x115-media-organize-btn:active {
   transform: translateY(1px);
 }
@@ -51,4 +58,5 @@
 
 #x115-media-organize-fab:hover {
   background: #0b5f59;
+  transform: translateY(-1px);
 }

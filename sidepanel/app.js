@@ -63,16 +63,96 @@ const UI_PREFS_KEY = 'sidepanelUiPrefs';
 
 const api = createApi115(async (url, init) => fetch(url, init));
 
+const MAX_LOG_LINES = 300;
+
 function log(msg, level = 'info') {
   const el = $('log');
   const ts = new Date().toLocaleTimeString();
   const prefix = level === 'error' ? '✗' : level === 'ok' ? '✓' : '·';
   el.textContent += `[${ts}] ${prefix} ${msg}\n`;
+  const lines = el.textContent.split('\n');
+  if (lines.length > MAX_LOG_LINES) {
+    el.textContent = lines.slice(-MAX_LOG_LINES).join('\n');
+  }
   el.scrollTop = el.scrollHeight;
 }
 
 function setStatus(text) {
   $('statusLine').textContent = text;
+}
+
+/* ---------- Progress bar ----------
+ * One place for show / percent / indeterminate / auto-hide.
+ * - pct only ever moves forward: phase estimates (mkdir → rename → move) overlap.
+ * - indeterminate: tree scan has no known total, so slide a segment instead of
+ *   parking the bar at a misleading 100%.
+ * - finish with hideProgress(delay) so a completed run does not stay pinned at 100%.
+ */
+const progressView = { hideTimer: null, pct: 0, indeterminate: false };
+
+function setProgress({ text = null, pct = null, indeterminate, reset = false } = {}) {
+  const box = $('progress');
+  const bar = $('progressBar');
+  const fill = $('barFill');
+  if (!box || !bar || !fill) return;
+
+  clearTimeout(progressView.hideTimer);
+  progressView.hideTimer = null;
+  box.hidden = false;
+  document.body.classList.add('has-progress');
+
+  if (reset) {
+    progressView.pct = 0;
+    progressView.indeterminate = false;
+    bar.classList.remove('is-indeterminate');
+    fill.style.width = '0%';
+    const pctEl = $('progressPct');
+    if (pctEl) pctEl.textContent = '0%';
+  }
+
+  // indeterminate is tri-state: true = enter slide mode, false = leave it,
+  // undefined = keep the current mode (text-only updates must not flip it).
+  if (indeterminate === true) {
+    progressView.indeterminate = true;
+    bar.classList.add('is-indeterminate');
+    const pctEl = $('progressPct');
+    if (pctEl) pctEl.textContent = '处理中';
+  } else {
+    if (indeterminate === false || pct != null) {
+      progressView.indeterminate = false;
+      bar.classList.remove('is-indeterminate');
+    }
+    if (pct != null) {
+      const next = Math.max(progressView.pct, Math.min(100, Math.round(Number(pct) || 0)));
+      progressView.pct = next;
+      fill.style.width = `${next}%`;
+      const pctEl = $('progressPct');
+      if (pctEl) pctEl.textContent = `${next}%`;
+    }
+  }
+
+  if (text != null) $('progressText').textContent = text;
+}
+
+/** Hide the bar now, or keep the final state visible for `delay` ms. */
+function hideProgress(delay = 0) {
+  clearTimeout(progressView.hideTimer);
+  progressView.hideTimer = null;
+  const hide = () => {
+    $('progress').hidden = true;
+    document.body.classList.remove('has-progress');
+    progressView.hideTimer = null;
+  };
+  if (delay > 0) progressView.hideTimer = setTimeout(hide, delay);
+  else hide();
+}
+
+const PROGRESS_HOLD_MS = 2600;
+
+/** Map a 0..1 fraction onto a [from, to] slice of the overall bar. */
+function fracPct(from, to, frac) {
+  const f = Math.max(0, Math.min(1, Number(frac) || 0));
+  return from + f * (to - from);
 }
 
 async function send(type, payload) {
@@ -323,7 +403,28 @@ async function fetchCidName(cid) {
 }
 
 function syncBusyLayout() {
-  document.body.classList.toggle('is-busy', !!(state.scanning || state.running));
+  const busy = !!(state.scanning || state.running);
+  document.body.classList.toggle('is-busy', busy);
+  setBusyControls(busy);
+}
+
+const BUSY_CONTROL_IDS = [
+  'cidInput', 'btnRefreshCid', 'recentCid',
+  'scanRecursive', 'enableMeta', 'skipCalibrateOrganized', 'moveFiles', 'cleanEmptyFolders',
+  'folderLayout', 'targetMode', 'targetCid', 'btnPickTarget', 'btnUseScanAsTarget', 'targetBasePath',
+  'checkAllVisible',
+];
+
+/** Lock directory/target/selection edits while scanning or organizing. */
+function setBusyControls(busy) {
+  for (const id of BUSY_CONTROL_IDS) {
+    const el = $(id);
+    if (el) el.disabled = !!busy;
+  }
+  const tbody = $('tbody');
+  if (tbody) tbody.inert = !!busy;
+  const tools = $('toolsPanel');
+  if (tools) tools.inert = !!busy;
 }
 
 function syncResultsLayout() {
@@ -368,7 +469,7 @@ function rebuildPlans() {
     row.pathDisplay = parent.pathDisplay;
     row.kind = parent.kind;
   }
-  refreshOrganizeStatus(state.rows);
+  refreshOrganizeStatus(state.rows, { sameRoot: targetRootMatchesScan() });
   if (state.rows.length) renderTable();
 }
 
@@ -412,6 +513,8 @@ async function loadSettings() {
 }
 
 async function loadCid({ quiet = false, force = false } = {}) {
+  // Never let a refresh overwrite the working directory mid-scan/organize
+  if (state.running || state.scanning) return null;
   try {
     const result = await send('REFRESH_CID').catch(() => send('GET_CID'));
     const cid = result?.cid != null && result.cid !== '' ? String(result.cid) : null;
@@ -451,10 +554,29 @@ function isDriveRootCid(cid) {
   return !v || v === '0';
 }
 
+function isCidValue(cid) {
+  return /^\d+$/.test(String(cid ?? '').trim());
+}
+
+/** requestDelayMs: treat 0 as "no delay" instead of falling back to a default. */
+function requestDelay(fallback) {
+  const n = Number(state.settings.requestDelayMs);
+  return Number.isFinite(n) ? Math.max(0, n) : fallback;
+}
+
+/** Whether the resolved target root is the same folder as the scan root. */
+function targetRootMatchesScan() {
+  if ($('targetMode')?.value !== 'cid') return true;
+  const target = String($('targetCid')?.value.trim() || '0');
+  const scan = String($('cidInput')?.value.trim() || state.rootCid || '0');
+  return isCidValue(target) && target === scan;
+}
+
 function updateScanButtonState() {
-  const root = isDriveRootCid($('cidInput')?.value);
+  const cid = $('cidInput')?.value.trim();
+  const invalid = !isCidValue(cid);
   if ($('btnScan')) {
-    $('btnScan').disabled = state.scanning || state.running || root;
+    $('btnScan').disabled = state.scanning || state.running || isDriveRootCid(cid) || invalid;
   }
 }
 
@@ -485,10 +607,11 @@ function selectedSizeLabel(rows = state.rows) {
 }
 
 function selectByKind(kind) {
+  const companions = companionIndex();
   for (const row of state.rows) {
     if (row.companionOf) continue;
-    row.selected = row.kind === kind || row.parsed?.kind === kind;
-    for (const c of state.rows.filter((r) => r.companionOf === row.id)) {
+    row.selected = !row.alreadyOrganized && (row.kind === kind || row.parsed?.kind === kind);
+    for (const c of companions.get(row.id) || []) {
       c.selected = row.selected;
     }
   }
@@ -538,6 +661,7 @@ function groupKeyForRow(row) {
 function buildRowGroups() {
   /** @type {Map<string, { key: string, rows: object[], primary: object }>} */
   const map = new Map();
+  const byId = new Map(state.rows.map((row) => [row.id, row]));
   const companions = [];
   for (const row of state.rows) {
     if (row.companionOf) {
@@ -550,7 +674,7 @@ function buildRowGroups() {
   }
   // Attach companions after their parent episode inside the same series group
   for (const c of companions) {
-    const parent = state.rows.find((r) => r.id === c.companionOf);
+    const parent = byId.get(c.companionOf);
     const key = parent ? groupKeyForRow(parent) : groupKeyForRow(c);
     if (!map.has(key)) map.set(key, { key, rows: [], primary: c });
     map.get(key).rows.push(c);
@@ -691,7 +815,6 @@ function setViewFilter(view, { force = false } = {}) {
   if (!force && view === state.viewFilter) return;
   state.viewFilter = view;
   syncViewChips();
-  saveUiPrefs({ viewFilter: state.viewFilter });
   renderTable();
 }
 
@@ -713,7 +836,8 @@ function afterOrganizeSmartView() {
   } else if (needLeft) {
     setViewFilter('need', { force: true });
   } else {
-    setViewFilter('done', { force: true });
+    // Nothing left → back to the neutral view (never park the panel on 已在位)
+    setViewFilter('all');
   }
 }
 
@@ -724,7 +848,12 @@ async function loadUiPrefs() {
     if (prefs.organizeOpen) $('organizeBox').open = true;
     const logEl = document.querySelector('details.log');
     if (logEl && prefs.logOpen === true) logEl.open = true;
-    if (prefs.viewFilter) state.viewFilter = prefs.viewFilter;
+    // viewFilter is intentionally not restored: every open starts on「全部」
+    if (prefs.viewFilter !== undefined) {
+      const next = { ...prefs };
+      delete next.viewFilter;
+      await chrome.storage.local.set({ [UI_PREFS_KEY]: next });
+    }
   } catch {
     /* ignore */
   }
@@ -848,8 +977,11 @@ async function runCalibration(targetRows, { signal, quiet = false } = {}) {
     log(`TMDB 去重：${targets.length} 个文件 → ${byKey.size} 次查询`);
   }
   setStatus(`TMDB 校准中 · 0/${byKey.size}`);
+  if (!quiet) {
+    setProgress({ reset: true, pct: 0, text: `TMDB 校准 0/${byKey.size}` });
+  }
 
-  const tmdbDelay = Math.min(Math.max(Number(state.settings.requestDelayMs) || 200, 120), 250);
+  const tmdbDelay = Math.min(requestDelay(200), 250);
   const parsedList = [...byKey.values()].map((v) => v.parsed);
   const knownIds = parsedList.filter((p) => /^\d+$/.test(String(p?.tmdbId || '').trim())).length;
   if (knownIds && !quiet) log(`其中 ${knownIds} 部按 TMDB ID 拉取`);
@@ -860,6 +992,12 @@ async function runCalibration(targetRows, { signal, quiet = false } = {}) {
     concurrency: knownIds === parsedList.length ? 4 : 3,
     signal,
     onProgress: ({ index, total, title, error, aborted: calAbort }) => {
+      if (!quiet) {
+        setProgress({
+          pct: fracPct(0, 98, index / Math.max(1, total)),
+          text: `TMDB 校准 ${index}/${total}${title ? ` · ${title}` : ''}`,
+        });
+      }
       if (calAbort) {
         aborted = true;
         setStatus(`TMDB 已停止 · ${index}/${total}`);
@@ -906,6 +1044,15 @@ async function runCalibration(targetRows, { signal, quiet = false } = {}) {
       : `TMDB 完成：${hitCount}/${byKey.size} 命中`,
     hitCount ? 'ok' : 'info',
   );
+  if (!quiet) {
+    setProgress({
+      pct: aborted ? null : 100,
+      text: aborted
+        ? `TMDB 已停止 · ${hitCount}/${byKey.size} 命中`
+        : `TMDB 完成 · ${hitCount}/${byKey.size} 命中`,
+    });
+    hideProgress(PROGRESS_HOLD_MS);
+  }
   return { hitCount, total: byKey.size, aborted };
 }
 
@@ -925,7 +1072,7 @@ function scanEmptyCopy() {
   if (!scan) {
     return {
       title: '还没有扫描结果',
-      hint: '确认上方目录 CID 后点「扫描」。可先展开「整理目标」选择输出结构。',
+      hint: '确认上方目录 CID 后点「扫描目录」。扫描后可校对片名与路径，再点底部「执行整理」。',
     };
   }
   if (scan.aborted && !scan.files) {
@@ -1011,6 +1158,13 @@ function renderTable() {
     $('btnRetryFailed').hidden = true;
     $('summary').hidden = true;
     $('toolsPanel').hidden = true;
+    $('actionBar').hidden = true;
+    const checkAll = $('checkAllVisible');
+    if (checkAll) {
+      checkAll.checked = false;
+      checkAll.indeterminate = false;
+      checkAll.disabled = true;
+    }
     syncViewChips(null);
     syncResultsLayout();
     return;
@@ -1031,6 +1185,25 @@ function renderTable() {
     (selSize ? `（${selSize}）` : '') +
     (visibleGroups.length !== groups.length ? ` · 显示 ${visibleGroups.length} 部` : '');
 
+  const visibleRows = visibleGroups.flatMap((g) => g.rows.filter((r) => !r.companionOf));
+  // 已在位 items can't be checked, so they don't count towards "select all"
+  const selectableRows = visibleRows.filter((r) => !r.alreadyOrganized);
+  const allVisibleSelected = selectableRows.length > 0 && selectableRows.every((r) => r.selected);
+  const someVisibleSelected = selectableRows.some((r) => r.selected);
+  const checkAll = $('checkAllVisible');
+  if (checkAll) {
+    checkAll.checked = allVisibleSelected;
+    checkAll.indeterminate = !allVisibleSelected && someVisibleSelected;
+    checkAll.disabled = selectableRows.length === 0 || state.running || state.scanning;
+    checkAll.title = selectableRows.length
+      ? '勾选当前筛选/视图下可见且待整理的作品'
+      : '当前视图均为已在位，无需勾选';
+  }
+  $('actionBar').hidden = false;
+  $('actionBarSummary').textContent = summary.selected
+    ? `已选 ${summary.selected} 项${selSize ? ` · ${selSize}` : ''}`
+    : `未勾选 · 共 ${summary.total} 项`;
+
   tbody.innerHTML = '';
   if (!visibleGroups.length) {
     const empty = filterEmptyCopy(listCtx.filterQ, listCtx.view);
@@ -1045,10 +1218,14 @@ function renderTable() {
       : false;
     if (multi) state.groupCollapsed.set(group.key, collapsed);
 
-    const allSelected = videos.every((r) => r.selected);
-    const someSelected = videos.some((r) => r.selected);
+    // Already at target → not selectable, so it never shows up as "all selected"
+    const selectable = videos.filter((r) => !r.alreadyOrganized);
+    const allSelected = selectable.length > 0 && selectable.every((r) => r.selected);
+    const someSelected = selectable.some((r) => r.selected);
     const title = primary.parsed?.title || seriesQueryTitle(primary.parsed) || primary.originalName;
-    const region = primary.parsed?.region || '';
+    const region = REGION_FOLDERS.includes(primary.parsed?.region)
+      ? primary.parsed.region
+      : '其他剧集';
     const year = primary.parsed?.year || '';
     const range = episodeRangeLabel(group.rows);
     const pathSample = primary.pathDisplay || '';
@@ -1081,7 +1258,8 @@ function renderTable() {
     head.innerHTML = `
       <td class="col-check">
         <input type="checkbox" data-role="group-select" data-group="${escapeAttr(group.key)}"
-          ${allSelected ? 'checked' : ''} ${!allSelected && someSelected ? 'data-indeterminate="1"' : ''} />
+          ${allSelected ? 'checked' : ''} ${!allSelected && someSelected ? 'data-indeterminate="1"' : ''}
+          ${selectable.length ? '' : 'disabled title="整组均已在目标位置，无需再整理"'} />
       </td>
       <td class="col-work">
         <div class="work-cell">
@@ -1131,7 +1309,7 @@ function renderTable() {
       tr.className = `group-child${collapsed ? ' is-hidden' : ''}${row.companionOf ? ' is-companion' : ''}${row.alreadyOrganized ? ' is-done' : ''}${isLowConfidence(row) ? ' is-low' : ''}${collideIds.has(row.id) ? ' is-dup' : ''}`;
       const epHint = parseLabel(row.parsed);
     tr.innerHTML = `
-      <td class="col-check"><input type="checkbox" data-role="select" ${row.selected ? 'checked' : ''} /></td>
+      <td class="col-check"><input type="checkbox" data-role="select" ${row.selected && !row.alreadyOrganized ? 'checked' : ''} ${row.alreadyOrganized ? 'disabled title="已在目标位置，无需再整理"' : ''} /></td>
         <td class="col-work">
           <div class="file-cell">
             <div class="file-name" title="${escapeAttr(row.originalName)}">${escapeHtml(row.originalName)}${row.alreadyOrganized ? ' <span class="tag-done">已在位</span>' : ''}${collideIds.has(row.id) ? ' <span class="tag-warn">冲突</span>' : ''}</div>
@@ -1156,7 +1334,7 @@ function renderTable() {
     }
   }
 
-  $('btnRun').disabled = summary.selected === 0 || state.running;
+  $('btnRun').disabled = summary.selected === 0 || state.running || state.scanning;
   $('btnSelectAll').disabled = false;
   $('btnSelectNone').disabled = false;
   $('btnSelectVisible').disabled = visibleGroups.length === 0;
@@ -1194,7 +1372,7 @@ function syncRowFromDom(tr) {
   const id = tr.dataset.id;
   const row = state.rows.find((r) => r.id === id);
   if (!row) return;
-  row.selected = tr.querySelector('[data-role="select"]').checked;
+  row.selected = tr.querySelector('[data-role="select"]').checked && !row.alreadyOrganized;
   const typedName = tr.querySelector('[data-role="newName"]').value.trim();
   row.newName = typedName || row.originalName || row.newName;
   const path = tr.querySelector('[data-role="path"]').value.trim();
@@ -1225,10 +1403,23 @@ function syncCompanionsForParent(parent) {
 }
 
 function rowsInGroup(key) {
+  const byId = new Map(state.rows.map((row) => [row.id, row]));
   return state.rows.filter((row) => {
-    const parent = row.companionOf ? state.rows.find((r) => r.id === row.companionOf) : row;
+    const parent = row.companionOf ? byId.get(row.companionOf) : row;
     return parent && groupKeyForRow(parent) === key;
   });
+}
+
+/** parent row id → companion rows (subtitles / nfo / images). */
+function companionIndex() {
+  const map = new Map();
+  for (const row of state.rows) {
+    if (!row.companionOf) continue;
+    const list = map.get(row.companionOf);
+    if (list) list.push(row);
+    else map.set(row.companionOf, [row]);
+  }
+  return map;
 }
 
 function applyGroupTitleYear(key, { title, year } = {}) {
@@ -1248,14 +1439,23 @@ function applyGroupTitleYear(key, { title, year } = {}) {
   rebuildPlans();
 }
 
+/** group key|tmdb id currently being fetched — prevents Enter + change double-apply. */
+const applyingTmdb = new Set();
+
 async function applyGroupTmdbId(key, rawId) {
   const tid = String(rawId || '').trim().replace(/^tmdb-?/i, '');
   if (!/^\d+$/.test(tid)) {
     log('TMDB ID 应为数字', 'error');
     return;
   }
+  const guardKey = `${key}|${tid}`;
+  if (applyingTmdb.has(guardKey)) return;
+  applyingTmdb.add(guardKey);
   const rows = rowsInGroup(key).filter((r) => !r.companionOf);
-  if (!rows.length) return;
+  if (!rows.length) {
+    applyingTmdb.delete(guardKey);
+    return;
+  }
   const kind = rows[0].kind === 'movie' || rows[0].parsed?.kind === 'movie' ? 'movie' : 'tv';
   setStatus(`按 TMDB ID ${tid} 拉取…`);
   try {
@@ -1276,12 +1476,13 @@ async function applyGroupTmdbId(key, rawId) {
         score: 1,
         kind,
       };
+    const companions = companionIndex();
     for (const row of rows) {
       row.parsed.tmdbId = tid;
       row.parsed = applyEnrichToParsed(row.parsed, hit, row.originalName);
       row.parsed.tmdbId = tid;
       row.kind = row.parsed.kind;
-      for (const c of state.rows.filter((r) => r.companionOf === row.id)) {
+      for (const c of companions.get(row.id) || []) {
         c.parsed = { ...row.parsed, ext: c.parsed?.ext };
         c.kind = row.kind;
       }
@@ -1298,6 +1499,8 @@ async function applyGroupTmdbId(key, rawId) {
   } catch (err) {
     log(`应用 TMDB ID 失败: ${err.message || err}`, 'error');
     setStatus('TMDB ID 应用失败');
+  } finally {
+    applyingTmdb.delete(guardKey);
   }
 }
 
@@ -1307,7 +1510,7 @@ $('tbody').addEventListener('change', (e) => {
   if (role === 'group-select') {
     const key = e.target.dataset.group;
     const on = e.target.checked;
-    for (const row of rowsInGroup(key)) row.selected = on;
+    for (const row of rowsInGroup(key)) row.selected = on && !row.alreadyOrganized;
     renderTable();
     return;
   }
@@ -1337,6 +1540,17 @@ $('tbody').addEventListener('change', (e) => {
       if (kind === 'tv' && !row.parsed.episode) row.parsed.episode = 1;
       if (kind !== 'tv') {
         row.parsed.region = null;
+      } else if (!REGION_FOLDERS.includes(row.parsed.region)) {
+        // Re-detect so the region dropdown matches the planned path folder
+        row.parsed.region = detectRegion({
+          filename: row.originalName,
+          title: row.parsed.title || row.parsed.localTitle,
+          relPath: row.parsed.relPath || row.item?._relPath || '',
+          tags: row.parsed.tags,
+          originCountries: row.parsed.originCountries,
+          originalLanguage: row.parsed.originalLanguage,
+          isAnime: row.parsed.isAnime,
+        });
       }
     }
     rebuildPlans();
@@ -1355,22 +1569,36 @@ $('tbody').addEventListener('change', (e) => {
     return;
   }
 
+  if (role === 'group-tmdbid') {
+    const key = e.target.dataset.group;
+    const raw = String(e.target.value || '').trim();
+    if (!raw) return;
+    const next = raw.replace(/^tmdb-?/i, '');
+    const current = String(
+      rowsInGroup(key).find((r) => !r.companionOf)?.parsed?.tmdbId || '',
+    ).trim();
+    // Enter already applied it; only react when the value actually changed
+    if (next !== current) applyGroupTmdbId(key, raw);
+    return;
+  }
+
   if (role === 'group-path') {
     const key = e.target.dataset.group;
     const path = e.target.value.trim();
     const base = path ? path.split(/[\\/]+/).filter(Boolean).filter((s) => !/^Season\s+\d+$/i.test(s)) : [];
+    const companions = companionIndex();
     for (const row of rowsInGroup(key)) {
       if (row.companionOf) continue;
       const seasonSeg = (row.pathSegments || []).find((s) => /^Season\s+\d+$/i.test(s));
       row.pathSegments = seasonSeg ? [...base, seasonSeg] : [...base];
       row.pathDisplay = row.pathSegments.join('/');
       // companions share path
-      for (const c of state.rows.filter((r) => r.companionOf === row.id)) {
+      for (const c of companions.get(row.id) || []) {
         c.pathSegments = [...row.pathSegments];
         c.pathDisplay = row.pathDisplay;
       }
     }
-    refreshOrganizeStatus(state.rows);
+    refreshOrganizeStatus(state.rows, { sameRoot: targetRootMatchesScan() });
     renderTable();
     return;
   }
@@ -1389,7 +1617,7 @@ $('tbody').addEventListener('change', (e) => {
   } else if (role === 'newName' || role === 'path') {
     const row = state.rows.find((r) => r.id === tr.dataset.id);
     if (row && !row.companionOf) syncCompanionsForParent(row);
-    refreshOrganizeStatus(state.rows);
+    refreshOrganizeStatus(state.rows, { sameRoot: targetRootMatchesScan() });
     if (row && !row.companionOf) renderTable();
   }
 });
@@ -1443,7 +1671,7 @@ $('selectPreset')?.addEventListener('change', (e) => {
 });
 
 $('btnSelectAll').addEventListener('click', () => {
-  state.rows.forEach((r) => { r.selected = true; });
+  state.rows.forEach((r) => { r.selected = !r.alreadyOrganized; });
   renderTable();
 });
 
@@ -1457,22 +1685,46 @@ $('btnSelectVisible').addEventListener('click', () => {
   const visibleIds = new Set(
     visibleGroups.flatMap((g) => g.rows.filter((r) => !r.companionOf).map((r) => r.id)),
   );
+  const companions = companionIndex();
   for (const row of state.rows) {
     if (row.companionOf) continue;
-    row.selected = visibleIds.has(row.id);
-    for (const c of state.rows.filter((r) => r.companionOf === row.id)) {
+    row.selected = visibleIds.has(row.id) && !row.alreadyOrganized;
+    for (const c of companions.get(row.id) || []) {
       c.selected = row.selected;
     }
   }
   renderTable();
-  log(`已勾选可见 ${visibleIds.size} 项`, 'ok');
+  log(`已勾选可见 ${state.rows.filter((r) => !r.companionOf && r.selected).length} 项`, 'ok');
+});
+
+/** Set selection for currently visible works only (leave hidden groups untouched). */
+function setVisibleSelection(selected) {
+  const { visibleGroups } = getListContext();
+  const visibleIds = new Set(
+    visibleGroups.flatMap((g) => g.rows.filter((r) => !r.companionOf).map((r) => r.id)),
+  );
+  if (!visibleIds.size) return;
+  const companions = companionIndex();
+  for (const row of state.rows) {
+    if (row.companionOf || !visibleIds.has(row.id)) continue;
+    row.selected = !!selected && !row.alreadyOrganized;
+    for (const c of companions.get(row.id) || []) {
+      c.selected = row.selected;
+    }
+  }
+  renderTable();
+}
+
+$('checkAllVisible')?.addEventListener('change', (e) => {
+  setVisibleSelection(e.target.checked);
 });
 
 $('btnSelectNeed').addEventListener('click', () => {
+  const companions = companionIndex();
   for (const row of state.rows) {
     if (row.companionOf) continue;
     row.selected = !row.alreadyOrganized;
-    for (const c of state.rows.filter((r) => r.companionOf === row.id)) {
+    for (const c of companions.get(row.id) || []) {
       c.selected = row.selected;
     }
   }
@@ -1491,10 +1743,11 @@ $('btnSelectMovie').addEventListener('click', () => {
 });
 
 $('btnSelectLow').addEventListener('click', () => {
+  const companions = companionIndex();
   for (const row of state.rows) {
     if (row.companionOf) continue;
-    row.selected = isLowConfidence(row);
-    for (const c of state.rows.filter((r) => r.companionOf === row.id)) {
+    row.selected = !row.alreadyOrganized && isLowConfidence(row);
+    for (const c of companions.get(row.id) || []) {
       c.selected = row.selected;
     }
   }
@@ -1505,15 +1758,16 @@ $('btnSelectLow').addEventListener('click', () => {
 $('btnRetryFailed').addEventListener('click', () => {
   const failed = new Set(state.lastFailedIds || []);
   if (!failed.size) return;
+  const companions = companionIndex();
   for (const row of state.rows) {
     if (row.companionOf) {
       // Failed subtitle/nfo can be retried alone without re-moving a successful parent
-      row.selected = failed.has(row.id);
+      row.selected = failed.has(row.id) && !row.alreadyOrganized;
       continue;
     }
-    row.selected = failed.has(row.id);
-    for (const c of state.rows.filter((r) => r.companionOf === row.id)) {
-      if (failed.has(c.id)) c.selected = true;
+    row.selected = failed.has(row.id) && !row.alreadyOrganized;
+    for (const c of companions.get(row.id) || []) {
+      if (failed.has(c.id)) c.selected = !c.alreadyOrganized;
       else if (row.selected && !c.alreadyOrganized) c.selected = true;
       else if (!failed.has(c.id)) c.selected = false;
     }
@@ -1620,6 +1874,8 @@ document.addEventListener('keydown', (e) => {
     }
     return;
   }
+  // Single-key shortcuts must not fire while a button/link has focus
+  if (/^(BUTTON|A)$/i.test(e.target?.tagName || '')) return;
   if (e.key === 'Escape') {
     let changed = false;
     if (state.tableFilter) {
@@ -1629,7 +1885,6 @@ document.addEventListener('keydown', (e) => {
     }
     if (state.viewFilter && state.viewFilter !== 'all') {
       state.viewFilter = 'all';
-      saveUiPrefs({ viewFilter: 'all' });
       changed = true;
     }
     if (changed) {
@@ -1751,7 +2006,7 @@ $('cidInput').addEventListener('input', () => {
 
 $('cidInput').addEventListener('change', () => {
   const cid = $('cidInput').value.trim();
-  if (cid && cid !== '0') fetchCidName(cid);
+  if (isCidValue(cid) && cid !== '0') fetchCidName(cid);
 });
 
 $('btnRefreshCid').addEventListener('click', async () => {
@@ -1879,6 +2134,7 @@ function stopScan() {
   state.scanAbort?.abort();
   log('正在停止扫描…');
   setStatus('正在停止…');
+  setProgress({ indeterminate: true, text: '正在停止扫描…' });
 }
 
 async function scan() {
@@ -1890,6 +2146,11 @@ async function scan() {
   const cid = $('cidInput').value.trim();
   const recursive = $('scanRecursive').checked;
 
+  if (!isCidValue(cid)) {
+    setStatus('CID 无效：只能填数字');
+    log('已阻止扫描：CID 只能填纯数字。请点「同步」读取当前 115 目录，或从「最近」选择。', 'error');
+    return;
+  }
   if (isDriveRootCid(cid)) {
     updateCidRootWarning();
     setStatus('已阻止：不能扫描网盘根目录');
@@ -1916,6 +2177,7 @@ async function scan() {
     `${recursive ? '（含子文件夹）' : '（仅当前层）'}`,
   );
   setScanningUi(true);
+  setProgress({ reset: true, indeterminate: true, text: '正在拉取文件列表…' });
 
   try {
     const login = await send('CHECK_LOGIN');
@@ -1925,7 +2187,7 @@ async function scan() {
     }
     setStatus(recursive ? '正在递归拉取文件…' : '正在拉取文件列表…');
 
-    const delayMs = Number(state.settings.requestDelayMs) || 250;
+    const delayMs = requestDelay(250);
     let files;
     if (recursive) {
       files = await api.listAllFilesRecursive(cid, {
@@ -1934,9 +2196,14 @@ async function scan() {
         onProgress: (p) => {
           if (p.phase === 'list') {
             setStatus(`扫描中 · 目录 ${p.scannedDirs} · 文件 ${p.files}${p.path ? ` · ${p.path}` : ''}`);
+            setProgress({
+              indeterminate: true,
+              text: `扫描 目录 ${p.scannedDirs} · 文件 ${p.files}`,
+            });
           } else if (p.phase === 'aborted') {
             aborted = true;
             setStatus(`已停止 · 已扫到 ${p.files} 个文件`);
+            setProgress({ indeterminate: false, text: `已停止 · 已扫到 ${p.files} 个文件` });
           }
         },
       });
@@ -1962,6 +2229,7 @@ async function scan() {
       aborted ? 'info' : 'ok',
     );
     setStatus('正在解析…');
+    setProgress({ indeterminate: true, text: `解析 ${files.length} 个文件条目…` });
 
     try {
       const fresh = await send('GET_SETTINGS');
@@ -1998,7 +2266,13 @@ async function scan() {
     }
 
     await hydrateTmdbCache();
-    state.rows = buildPreviewRows(files, settings, { enrichMap: new Map() });
+    // Target root differs from scan root → relative paths are incomparable, so do not
+    // auto-unselect "already at target" rows (they may still need to be moved).
+    const sameRoot = targetRootMatchesScan();
+    if (!sameRoot) {
+      log('目标目录不是扫描目录：不会自动判定“已在位”，请确认勾选后再执行', 'info');
+    }
+    state.rows = buildPreviewRows(files, settings, { enrichMap: new Map(), sameRoot });
     renderTable();
     const alreadyN = state.rows.filter((r) => !r.companionOf && r.alreadyOrganized).length;
     if (alreadyN) {
@@ -2042,6 +2316,15 @@ async function scan() {
       setStatus(`扫描完成${calHint}`);
       log(`可整理 ${state.rows.length} 项 · 结构「${FOLDER_LAYOUTS[org.folderLayout]?.label || org.folderLayout}」${targetHint}`, 'ok');
     }
+    // TMDB already parked the bar at 100%; otherwise close it out here
+    if (progressView.pct < 100) {
+      setProgress({
+        indeterminate: false,
+        pct: aborted ? null : 100,
+        text: aborted ? '扫描已停止' : `扫描完成 · ${state.rows.length} 项`,
+      });
+    }
+    hideProgress(PROGRESS_HOLD_MS);
   } catch (err) {
     if (err?.name === 'AbortError' || /已停止/.test(err?.message || '')) {
       if (!state.rows.length) {
@@ -2061,10 +2344,13 @@ async function scan() {
       }
       setStatus('扫描已停止');
       log('已停止扫描', 'ok');
+      setProgress({ indeterminate: false, text: '扫描已停止' });
     } else {
-    setStatus('扫描失败');
-    log(err.message || String(err), 'error');
+      setStatus('扫描失败');
+      log(err.message || String(err), 'error');
+      setProgress({ indeterminate: false, text: `扫描失败：${err.message || err}` });
     }
+    hideProgress(PROGRESS_HOLD_MS);
   } finally {
     state.scanAbort = null;
     setScanningUi(false);
@@ -2073,6 +2359,10 @@ async function scan() {
 
 function setOrganizeUi(running) {
   state.running = running;
+  const hasRows = state.rows.length > 0;
+  // Keep the dock (and its stop button) available even when cleaning an empty preview
+  $('actionBar').hidden = !(hasRows || running);
+  if (running && !hasRows) $('actionBarSummary').textContent = '正在处理当前目录…';
   $('btnRun').disabled = running || state.scanning || !state.rows.some((r) => r.selected);
   $('btnStopRun').hidden = !running;
   updateScanButtonState();
@@ -2086,11 +2376,13 @@ function stopOrganize() {
     state.cleanupAbort.abort();
     log('正在停止清理…');
     setStatus('正在停止清理…');
+    setProgress({ text: '正在停止清理…' });
     return;
   }
   state.organizeAbort?.abort();
   log('正在停止整理…');
   setStatus('正在停止整理…');
+  setProgress({ text: '正在停止整理…' });
 }
 
 async function runOrganize() {
@@ -2098,12 +2390,18 @@ async function runOrganize() {
   for (const tr of $('tbody').querySelectorAll('tr[data-id]')) {
     syncRowFromDom(tr);
   }
-  const selected = state.rows.filter((r) => r.selected);
+  const skippedDone = state.rows.filter((r) => r.selected && r.alreadyOrganized).length;
+  // 已在位 = 目标名与目标路径都和现状一致，再执行只会白跑一次接口
+  const selected = state.rows.filter((r) => r.selected && !r.alreadyOrganized);
+  if (skippedDone) log(`已跳过 ${skippedDone} 个已在目标位置的文件`, 'info');
   if (!selected.length) return;
 
   const org = readOrganizeFields();
   const moveFiles = org.moveFiles;
-  const targetRoot = resolveTargetRootCid(org.targetMode, state.rootCid || '0', org.targetCid);
+  // Snapshot the scan root: cleanup after the run must use the same folder,
+  // not whatever the CID input happens to show later.
+  const scanCidSnapshot = String(state.rootCid || $('cidInput').value.trim() || '0');
+  const targetRoot = resolveTargetRootCid(org.targetMode, scanCidSnapshot, org.targetCid);
   const targetLabel = org.targetMode === 'cid'
     ? formatTargetLabel(state.settings.targetCidName, org.targetCid)
     : `扫描目录 (cid=${state.rootCid || '0'})`;
@@ -2129,13 +2427,11 @@ async function runOrganize() {
   const abort = new AbortController();
   state.organizeAbort = abort;
   setOrganizeUi(true);
-  $('progress').hidden = false;
-  $('barFill').style.width = '0%';
-  $('progressText').textContent = `0 / ${selected.length}`;
+  setProgress({ reset: true, pct: 0, text: `准备整理 ${selected.length} 个文件…` });
 
   // Organize uses short pauses between batches only (not per file).
   // Scan/TMDB still honor the higher requestDelayMs setting.
-  const delayMs = Math.min(Number(state.settings.requestDelayMs) || 80, 80);
+  const delayMs = Math.min(requestDelay(80), 80);
 
   api.clearFolderCache();
   const uniquePaths = new Set(
@@ -2156,42 +2452,50 @@ async function runOrganize() {
       if (p.phase === 'aborted') {
         aborted = true;
         setStatus(`整理已停止 · ${p.done || 0}/${p.total || selected.length}`);
+        setProgress({ text: `已停止 · ${p.done || 0}/${selected.length}` });
       } else if (p.phase === 'mkdir') {
         setStatus(`创建目录 ${p.groupIndex}/${p.groupCount}: ${p.path || '(根)'}`);
-        $('progressText').textContent = `建目录 ${p.groupIndex}/${p.groupCount}`;
+        setProgress({
+          pct: fracPct(2, 10, (p.groupIndex || 0) / Math.max(1, p.groupCount || 1)),
+          text: `建目录 ${p.groupIndex}/${p.groupCount}${p.path ? ` · ${p.path}` : ''}`,
+        });
       } else if (p.phase === 'rename') {
         setStatus(`批量重命名 ${p.renameCount} 个…`);
-        $('progressText').textContent = `重命名 ${p.renameCount}`;
+        setProgress({
+          pct: fracPct(10, 35, (p.renameCount || 0) / Math.max(1, selected.length)),
+          text: `重命名 ${p.renameCount} 个`,
+        });
       } else if (p.phase === 'rename_fallback') {
         log(`批量重命名失败，改为逐个: ${p.error}`, 'error');
       } else if (p.phase === 'move') {
         setStatus(`批量移动 ${p.moveCount} → ${p.path}`);
-        $('progressText').textContent = `移动 ${p.groupIndex}/${p.groupCount}（${p.moveCount} 个）`;
+        setProgress({
+          // Group-based estimate fills the bar during the long move stage
+          pct: fracPct(35, 60, (p.groupIndex || 0) / Math.max(1, p.groupCount || 1)),
+          text: `移动 ${p.groupIndex}/${p.groupCount} 组 · 本组 ${p.moveCount} 个`,
+        });
         log(`移动 ${p.moveCount} 个文件 → ${p.path}`, 'ok');
       } else if (p.phase === 'move_fallback') {
         log(`批量移动失败，改为逐个: ${p.error}`, 'error');
-      } else if (p.phase === 'done' && p.row) {
+      } else if ((p.phase === 'done' && p.row) || p.phase === 'error') {
         const done = p.done || 0;
-        const pct = Math.round((done / selected.length) * 100);
-        $('barFill').style.width = `${pct}%`;
-        $('progressText').textContent = `${done} / ${selected.length}`;
-        if (p.ok) {
+        setProgress({
+          pct: fracPct(35, 95, done / Math.max(1, selected.length)),
+          text: `${done} / ${selected.length}`,
+        });
+        if (p.phase === 'error') {
+          log(`${p.row?.originalName || '?'}: ${p.error}`, 'error');
+          if (/验证|captcha|安全/i.test(p.error || '')) {
+            log('可能触发了 115 安全验证，请在网盘页面完成验证后重试', 'error');
+          }
+        } else if (p.ok) {
           log(
             `${p.row.originalName} → ${fullPlanFilePath(p.row)}`,
             'ok',
           );
         }
-      } else if (p.phase === 'error') {
-        const done = p.done || 0;
-        $('barFill').style.width = `${Math.round((done / selected.length) * 100)}%`;
-        $('progressText').textContent = `${done} / ${selected.length}`;
-        log(`${p.row?.originalName || '?'}: ${p.error}`, 'error');
-        if (/验证|captcha|安全/i.test(p.error || '')) {
-          log('可能触发了 115 安全验证，请在网盘页面完成验证后重试', 'error');
-        }
       } else if (p.phase === 'finished') {
-        $('barFill').style.width = '100%';
-        $('progressText').textContent = `${p.ok || 0} 成功 / ${p.failed || 0} 失败`;
+        setProgress({ pct: 100, text: `完成 · ${p.ok || 0} 成功 / ${p.failed || 0} 失败` });
       }
     },
   });
@@ -2227,7 +2531,8 @@ async function runOrganize() {
       row.originalName = row.newName || row.originalName;
     }
   }
-  refreshOrganizeStatus(state.rows);
+  // Files now sit at the target, so compare against the planned path directly
+  refreshOrganizeStatus(state.rows, { sameRoot: true });
   afterOrganizeSmartView();
 
   // Skip auto-clean when anything failed — leftover companions may still sit in source dirs
@@ -2235,7 +2540,12 @@ async function runOrganize() {
     // 115 listing can lag right after batch move — settle then clear path cache
     api.clearFolderCache();
     await sleep(600);
-    await runCleanup({ quietConfirm: true, reason: '整理后自动清理' });
+    await runCleanup({
+      quietConfirm: true,
+      reason: '整理后自动清理',
+      scanCid: scanCidSnapshot,
+      targetRootCid: targetRoot,
+    });
   } else if (doClean && failCount > 0) {
     log('有失败项，已跳过自动清理（避免误删源目录残留字幕/文件）。可重试失败后再清，或手动点「清理空夹」。', 'info');
   }
@@ -2247,13 +2557,28 @@ async function runOrganize() {
       ? `整理已停止（成功 ${okCount}）`
       : (failCount ? `完成（${failCount} 失败）` : '整理完成'),
   );
+  // Keep the final result readable, then collapse the dock row
+  hideProgress(PROGRESS_HOLD_MS);
 }
 
 /**
  * Delete junk files + folders under current scan cid with no keepable video.
  */
-async function runCleanup({ quietConfirm = false, reason = '手动清理' } = {}) {
-  const scanCid = String($('cidInput').value.trim() || state.rootCid || '0');
+async function runCleanup({
+  quietConfirm = false,
+  reason = '手动清理',
+  scanCid: scanCidSnapshot = null,
+  targetRootCid: targetRootSnapshot = null,
+} = {}) {
+  const scanCid = String(
+    scanCidSnapshot != null
+      ? scanCidSnapshot
+      : ($('cidInput').value.trim() || state.rootCid || '0'),
+  );
+  if (!isCidValue(scanCid)) {
+    log('跳过清理：扫描目录 CID 无效（只能填数字）', 'error');
+    return null;
+  }
   if (scanCid === '0') {
     log('跳过清理：扫描目录为网盘根目录（cid=0），过于危险', 'error');
     return null;
@@ -2269,9 +2594,14 @@ async function runCleanup({ quietConfirm = false, reason = '手动清理' } = {}
     if (!ok) return null;
   }
 
-  const org = readOrganizeFields();
-  const targetRoot = resolveTargetRootCid(org.targetMode, state.rootCid || '0', org.targetCid);
-  const delayMs = Number(state.settings.requestDelayMs) || 300;
+  let targetRoot;
+  if (targetRootSnapshot != null) {
+    targetRoot = String(targetRootSnapshot);
+  } else {
+    const org = readOrganizeFields();
+    targetRoot = resolveTargetRootCid(org.targetMode, state.rootCid || '0', org.targetCid);
+  }
+  const delayMs = requestDelay(300);
   const protectCids = [scanCid, targetRoot, '0'];
   const abort = new AbortController();
   state.cleanupAbort = abort;
@@ -2279,7 +2609,8 @@ async function runCleanup({ quietConfirm = false, reason = '手动清理' } = {}
   api.clearFolderCache();
   log(`${reason}：清理垃圾文件 + 无有效视频夹（cid=${scanCid}）…`);
   setStatus('清理中…');
-  $('progress').hidden = false;
+  // Reset first: a previous organize left the bar at 100%
+  setProgress({ reset: true, indeterminate: true, text: '正在扫描目录结构…' });
   $('btnStopRun').hidden = false;
   $('btnStopRun').textContent = '停止清理';
 
@@ -2291,16 +2622,33 @@ async function runCleanup({ quietConfirm = false, reason = '手动清理' } = {}
       signal: abort.signal,
       onProgress: (p) => {
         if (p.phase === 'scan') {
-          $('progressText').textContent = `扫描目录 ${p.scanned}`;
+          // Tree size is unknown up front → keep the bar indeterminate
+          setProgress({ indeterminate: true, text: `扫描 ${p.scanned} 个文件夹…` });
           setStatus(`清理扫描: ${p.path || p.cid}`);
         } else if (p.phase === 'junk') {
-          $('progressText').textContent = `删垃圾 ${p.done + 1}/${p.total}`;
+          setProgress({
+            pct: fracPct(0, 30, (p.done || 0) / Math.max(1, p.total || 1)),
+            text: `删垃圾 ${p.done + 1}/${p.total}`,
+          });
           setStatus(`删垃圾: ${p.path || p.name}`);
         } else if (p.phase === 'delete') {
-          $('progressText').textContent = `删空夹 ${p.done + 1}/${p.total}`;
+          setProgress({
+            pct: fracPct(30, 98, (p.done || 0) / Math.max(1, p.total || 1)),
+            text: `删空夹 ${p.done + 1}/${p.total}`,
+          });
           setStatus(`删除: ${p.path || p.name}`);
         } else if (p.phase === 'error') {
           log(`删除失败 ${p.path || p.name}: ${p.error}`, 'error');
+        } else if (p.phase === 'done') {
+          const junkN = p.deletedJunk || 0;
+          const folderN = p.deleted || 0;
+          setProgress({
+            indeterminate: false,
+            pct: p.aborted ? null : 100,
+            text: p.aborted
+              ? `已停止 · 垃圾 ${junkN} · 空夹 ${folderN}`
+              : `完成 · 垃圾 ${junkN} · 空夹 ${folderN}`,
+          });
         }
       },
     });
@@ -2328,6 +2676,7 @@ async function runCleanup({ quietConfirm = false, reason = '手动清理' } = {}
   } catch (err) {
     log(`清理失败: ${err.message || err}`, 'error');
     setStatus('清理失败');
+    setProgress({ indeterminate: false, text: `清理失败：${err.message || err}` });
     return null;
   } finally {
     state.cleanupAbort = null;
@@ -2335,6 +2684,7 @@ async function runCleanup({ quietConfirm = false, reason = '手动清理' } = {}
     if (!$('btnStopRun').hidden && !state.organizeAbort) {
       $('btnStopRun').hidden = true;
     }
+    hideProgress(PROGRESS_HOLD_MS);
   }
 }
 
@@ -2349,11 +2699,13 @@ $('btnStopRun').addEventListener('click', stopOrganize);
 $('btnClean').addEventListener('click', async () => {
   if (state.running || state.scanning) return;
   setOrganizeUi(true);
+  $('actionBarSummary').textContent = '正在清理当前目录…';
   try {
     await runCleanup({ quietConfirm: false });
   } finally {
     setOrganizeUi(false);
-    $('progress').hidden = true;
+    hideProgress(PROGRESS_HOLD_MS);
+    if (state.rows.length) renderTable();
   }
 });
 
@@ -2363,7 +2715,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if (ch?.newValue != null) {
       const cid = String(ch.newValue);
       state.autoCid = cid;
-      if (!state.cidDirty) {
+      // Do not rewrite the working CID while a scan/organize is in progress
+      if (!state.cidDirty && !state.running && !state.scanning) {
         $('cidInput').value = cid;
         state.rootCid = cid;
         updateCidRootWarning();
@@ -2387,11 +2740,8 @@ window.addEventListener('focus', () => {
   if (!state.cidDirty) loadCid({ quiet: true, force: true });
 });
 
-setInterval(() => {
-  if (document.visibilityState === 'visible' && !state.running && !state.cidDirty) {
-    loadCid({ quiet: true, force: true });
-  }
-}, 2000);
+// CID is pushed by the content script on navigation and by focus/visibility refresh;
+// no polling needed (the old 2s interval caused constant storage writes).
 
 (async function init() {
   try {

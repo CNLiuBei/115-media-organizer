@@ -1,10 +1,5 @@
 import { createApi115 } from '../lib/api115.js';
 import { DEFAULT_SETTINGS, STORAGE_KEYS } from '../lib/types.js';
-import { enrichParsed } from '../lib/metadata.js';
-
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
-});
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
@@ -13,29 +8,6 @@ const api = createApi115(fetch);
 async function getSettings() {
   const data = await chrome.storage.sync.get(STORAGE_KEYS.settings);
   return { ...DEFAULT_SETTINGS, ...(data[STORAGE_KEYS.settings] || {}) };
-}
-
-async function proxyFetch(url, init = {}) {
-  const res = await fetch(url, {
-    ...init,
-    credentials: init.credentials || 'include',
-  });
-  const contentType = res.headers.get('content-type') || '';
-  const text = await res.text();
-  let json = null;
-  if (contentType.includes('json') || text.trim().startsWith('{') || text.trim().startsWith('[')) {
-    try {
-      json = JSON.parse(text);
-    } catch {
-      json = null;
-    }
-  }
-  return {
-    ok: res.ok,
-    status: res.status,
-    text,
-    json,
-  };
 }
 
 function extractCidFromUrl(href) {
@@ -73,6 +45,9 @@ function is115Tab(url) {
 
 async function persistCid(cid) {
   const value = String(cid ?? '0');
+  // Same value → skip storage writes (avoids onChanged churn on every tab event)
+  if (value === lastPersistedCid) return value;
+  lastPersistedCid = value;
   try {
     await chrome.storage.session.set({ [STORAGE_KEYS.lastCid]: value });
   } catch {
@@ -82,9 +57,11 @@ async function persistCid(cid) {
   return value;
 }
 
+let lastPersistedCid = null;
+
 async function askTabForCid(tabId) {
   try {
-    const res = await chrome.tabs.sendMessage(tabId, { type: 'REQUEST_CID' });
+    const res = await chrome.tabs.sendMessage(tabId, { type: 'REQUEST_CID' }, { frameId: 0 });
     if (res?.ok && res.cid != null && /^\d+$/.test(String(res.cid))) {
       return String(res.cid);
     }
@@ -233,42 +210,6 @@ async function handleMessage(message, sender) {
         })
         : await api.listAllFiles(cid);
       return { files, cid, recursive };
-    }
-
-    case 'API_LIST': {
-      return api.listFiles(String(payload?.cid || '0'), payload?.opts || {});
-    }
-
-    case 'API_ENSURE_PATH': {
-      api.clearFolderCache();
-      const cid = await api.ensurePath(payload?.segments || [], String(payload?.parentCid || '0'));
-      return { cid };
-    }
-
-    case 'API_BATCH_RENAME': {
-      return api.batchRename(payload?.filesNewName || {});
-    }
-
-    case 'API_MOVE': {
-      return api.moveFiles(payload?.fileIds || [], payload?.toCid);
-    }
-
-    case 'API_DELETE': {
-      return api.deleteFiles(payload?.fileIds || [], String(payload?.parentCid || '0'));
-    }
-
-    case 'API_CREATE_FOLDER': {
-      return api.createFolder(payload?.name, String(payload?.pid || '0'));
-    }
-
-    case 'ENRICH_ONE': {
-      const settings = await getSettings();
-      const result = await enrichParsed(fetch, settings, payload?.parsed || {});
-      return result;
-    }
-
-    case 'PROXY_FETCH': {
-      return proxyFetch(payload?.url, payload?.init || {});
     }
 
     case 'CHECK_LOGIN': {

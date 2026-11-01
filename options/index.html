@@ -9,10 +9,25 @@
 <body>
   <main>
     <header>
-      <p class="eyebrow">115 媒体整理</p>
-      <h1>设置</h1>
-      <p>筛选、目录结构和元数据。扫描与整理仍在侧边栏完成。</p>
+      <div class="header-copy">
+        <p class="eyebrow">115 媒体整理</p>
+        <h1>设置</h1>
+        <p>筛选、目录结构和元数据。扫描与整理仍在侧边栏完成。</p>
+      </div>
+      <div class="header-actions">
+        <button type="button" id="btnOpenSidePanel" class="btn">打开侧边栏</button>
+      </div>
     </header>
+
+    <section class="usage">
+      <h2>使用流程</h2>
+      <ol class="steps">
+        <li><strong>在 115 打开文件夹</strong><span>进入要整理的目录</span></li>
+        <li><strong>侧边栏点「同步」</strong><span>读取当前目录 CID</span></li>
+        <li><strong>扫描并校对</strong><span>改片名、路径并勾选</span></li>
+        <li><strong>底部执行整理</strong><span>确认后重命名 / 移动</span></li>
+      </ol>
+    </section>
 
     <form id="form">
       <section>
@@ -35,7 +50,7 @@
       </section>
 
       <section>
-        <h2>筛选</h2>
+        <h2>扫描与筛选</h2>
         <label class="row">
           <span>最小体积 (MB)</span>
           <input id="minSizeMB" type="number" min="0" step="1" />
@@ -53,31 +68,38 @@
           <label class="check"><input id="includeImage" type="checkbox" /> 图片/NFO（跟随视频）</label>
           <label class="check"><input id="skipJunkMedia" type="checkbox" /> 跳过样本/预告/花絮</label>
           <label class="check"><input id="skipCalibrateOrganized" type="checkbox" /> 复扫时跳过已在位校准</label>
-          <label class="check"><input id="moveFiles" type="checkbox" /> 默认移动到目标路径</label>
-          <label class="check"><input id="cleanEmptyFolders" type="checkbox" /> 整理后自动清理无视频文件夹</label>
         </div>
-        <p class="hint">清理会先删推广图/广告包等垃圾，再把已无有效视频的子文件夹移入回收站（不删扫描根；cid=0 时跳过自动清理）。</p>
       </section>
 
       <section>
-        <h2>整理后的文件夹</h2>
-        <label class="row">
-          <span>默认目录结构</span>
-          <select id="folderLayout"></select>
-        </label>
-        <p class="hint" id="folderLayoutHint"></p>
-        <pre class="layout-tree" id="folderLayoutTree" aria-label="Emby 目录树预览"></pre>
+        <h2>整理默认行为</h2>
+        <div class="checks">
+          <label class="check"><input id="moveFiles" type="checkbox" /> 默认移动到目标路径</label>
+          <label class="check"><input id="cleanEmptyFolders" type="checkbox" /> 整理后自动清理无视频文件夹</label>
+        </div>
         <label class="row">
           <span>默认整理到</span>
           <select id="targetMode">
             <option value="scan">当前扫描目录下</option>
-            <option value="cid">指定网盘目录（侧边栏选择）</option>
+            <option value="cid">指定网盘目录（在侧边栏选择）</option>
           </select>
         </label>
         <label class="row">
           <span>根路径前缀（可选）</span>
           <input id="targetBasePath" type="text" placeholder="例如：媒体库" />
         </label>
+        <p class="hint">选「指定网盘目录」后，具体目录在侧边栏点「选择…」指定并在浏览器中保留。</p>
+        <p class="hint">清理会先删推广图/广告包等垃圾，再把已无有效视频的子文件夹移入回收站（不删扫描根；cid=0 时跳过自动清理）。</p>
+      </section>
+
+      <section>
+        <h2>目录结构</h2>
+        <label class="row">
+          <span>默认目录结构</span>
+          <select id="folderLayout"></select>
+        </label>
+        <p class="hint" id="folderLayoutHint"></p>
+        <pre class="layout-tree" id="folderLayoutTree" aria-label="Emby 目录树预览"></pre>
         <p class="hint">Emby 标准树：电影、剧集分库；剧集用 <code>Season 01</code>；文件夹为 <code>片名 (年) {tmdb-id}</code>。自定义结构请选「自定义」并改下方模板。</p>
       </section>
 
@@ -121,14 +143,13 @@
       </div>
 
       <div class="footer">
-        <span id="msg" class="msg"></span>
+        <span id="msg" class="msg">更改后点「保存」生效</span>
         <div class="footer-actions">
           <button type="button" id="btnReset" class="btn">恢复默认</button>
           <button type="submit" class="btn primary">保存</button>
         </div>
       </div>
     </form>
-    <p class="hint">开发测试：<a id="realTestLink" href="../tools/real-test.html" target="_blank" rel="noreferrer">真实环境扫描</a></p>
   </main>
 
   <script type="module" src="options.js"></script>

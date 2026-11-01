@@ -1,7 +1,8 @@
 {
   "manifest_version": 3,
   "name": "115 媒体整理",
-  "version": "0.0.50",
+  "version": "0.0.52",
+  "minimum_chrome_version": "114",
   "description": "在 115 网盘中扫描、解析、TMDB 片名校准并批量整理媒体文件",
   "icons": {
     "16": "icons/icon16.png",
@@ -34,25 +35,20 @@
       "js": ["content/injector.js"],
       "css": ["content/injector.css"],
       "run_at": "document_idle",
-      "all_frames": true
+      "all_frames": false
     }
   ],
   "permissions": [
     "sidePanel",
     "storage",
-    "cookies",
     "tabs"
   ],
   "host_permissions": [
     "https://115.com/*",
     "https://*.115.com/*",
     "https://webapi.115.com/*",
-    "https://proapi.115.com/*",
     "https://api.themoviedb.org/*",
     "https://www.themoviedb.org/*",
-    "https://image.tmdb.org/*",
-    "https://media.themoviedb.org/*",
-    "https://movie.douban.com/*",
-    "https://www.douban.com/*"
+    "https://movie.douban.com/*"
   ]
 }
