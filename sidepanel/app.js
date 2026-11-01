@@ -2880,6 +2880,119 @@ $('updateBannerClose')?.addEventListener('click', async () => {
   }
 });
 
+/* ---------- One-click update ----------
+ * Unpacked extensions cannot reload their own code, but the File System
+ * Access API lets the user grant write access to the install directory once;
+ * we then overwrite files straight from GitHub (git-pull equivalent) and a
+ * browser restart picks up the new code.
+ */
+const GITHUB_REPO = 'CNLiuBei/115-media-organizer';
+const GITHUB_BRANCH = 'main';
+
+async function writeFilePath(rootHandle, path, data) {
+  const parts = String(path).split('/').filter(Boolean);
+  const name = parts.pop();
+  if (!name) return;
+  let dir = rootHandle;
+  for (const seg of parts) {
+    dir = await dir.getDirectoryHandle(seg, { create: true });
+  }
+  const fh = await dir.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  await w.write(data);
+  await w.close();
+}
+
+let updateRunning = false;
+
+async function oneClickUpdate(remoteVersion) {
+  if (updateRunning) return;
+  if (state.scanning || state.running) {
+    log('请等扫描/整理结束后再一键更新', 'warn');
+    return;
+  }
+  if (typeof window.showDirectoryPicker !== 'function') {
+    log('当前浏览器不支持目录授权，请手动下载替换', 'error');
+    return;
+  }
+
+  let rootHandle;
+  try {
+    rootHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+  } catch {
+    return; // user cancelled the picker
+  }
+
+  // Validate the picked dir is actually this extension's install dir
+  try {
+    const mf = await rootHandle.getFileHandle('manifest.json');
+    const local = JSON.parse(await (await mf.getFile()).text());
+    if (local.name !== chrome.runtime.getManifest().name) {
+      log(`所选目录属于「${local.name}」，不是本扩展的安装目录，已中止`, 'error');
+      return;
+    }
+  } catch {
+    log('所选目录中没有 manifest.json，不是扩展安装目录，已中止', 'error');
+    return;
+  }
+
+  updateRunning = true;
+  const btn = $('updateBannerInstall');
+  if (btn) btn.disabled = true;
+  try {
+    setStatus('正在获取文件列表…');
+    const treeRes = await fetch(
+      `https://api.github.com/repos/${GITHUB_REPO}/git/trees/${GITHUB_BRANCH}?recursive=1`,
+      { cache: 'no-store' },
+    );
+    if (!treeRes.ok) throw new Error(`GitHub API HTTP ${treeRes.status}`);
+    const tree = await treeRes.json();
+    const files = (tree.tree || [])
+      .filter((t) => t.type === 'blob' && !t.path.startsWith('.github/'))
+      .map((t) => t.path);
+    if (!files.length) throw new Error('仓库文件列表为空');
+
+    const localVersion = chrome.runtime.getManifest().version;
+    setProgress({ reset: true, text: `一键更新 v${localVersion} → v${remoteVersion}` });
+    let done = 0;
+    for (const path of files) {
+      const res = await fetch(
+        `https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}/${encodeURI(path)}`,
+        { cache: 'no-store' },
+      );
+      if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+      await writeFilePath(rootHandle, path, await res.arrayBuffer());
+      done += 1;
+      setProgress({
+        text: `写入 ${path}`,
+        pct: Math.round((done / files.length) * 100),
+      });
+    }
+    log(`一键更新完成：v${localVersion} → v${remoteVersion}，共写入 ${done} 个文件`, 'ok');
+    log('请重启浏览器使新版本生效（unpacked 扩展重启时从磁盘读取代码）', 'info');
+    setStatus(`已更新到 v${remoteVersion}，重启浏览器后生效`);
+    hideProgress(PROGRESS_HOLD_MS);
+    $('updateBanner').hidden = true;
+    try {
+      await chrome.storage.local.set({ dismissedUpdateVersion: remoteVersion });
+    } catch {
+      /* ignore */
+    }
+  } catch (err) {
+    hideProgress();
+    log(`一键更新失败：${err.message || err}`, 'error');
+    setStatus('一键更新失败');
+  } finally {
+    updateRunning = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+$('updateBannerInstall')?.addEventListener('click', () => {
+  const version = $('updateBanner')?.dataset?.version;
+  if (version) oneClickUpdate(version);
+});
+
 async function checkForUpdate({ force = false } = {}) {
   const url = String(state.settings.updateCheckUrl || '').trim();
   if (!/^https?:\/\//i.test(url)) return { status: 'disabled' };

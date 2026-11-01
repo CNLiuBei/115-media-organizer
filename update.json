@@ -1,5 +1,5 @@
 {
-  "version": "0.0.58",
+  "version": "0.0.59",
   "url": "https://github.com/CNLiuBei/115-media-organizer/releases",
-  "notes": "点击侧边栏版本号可立即检查更新；窗口重新可见时自动复查。"
+  "notes": "提示条新增「一键更新」：授权本地扩展目录后直接写入 GitHub 最新代码，重启浏览器生效。"
 }

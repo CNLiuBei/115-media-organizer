@@ -361,6 +361,26 @@ body.has-results:not(.is-busy) .status-pill {
   color: var(--warn);
 }
 
+.update-banner-install {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  font-size: 12px;
+  background: var(--warn);
+  border-color: var(--warn);
+  color: #fff;
+  font-weight: 600;
+}
+
+.update-banner-install:hover:not(:disabled) {
+  background: #8a5e00;
+  border-color: #8a5e00;
+}
+
+.update-banner-install:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .hint-link {
   color: inherit;
   font-weight: 600;

@@ -51,7 +51,7 @@ Chrome / Edge Manifest V3 浏览器扩展：在已登录的 [115 网盘](https:/
 | 整理到 | 扫描目录下，或指定网盘目录（侧边栏浏览选择） |
 | 根路径前缀 | 可选，加在布局路径前，如 `媒体库` |
 | 路径/文件名模板 | `{title}` `{year}` `{season}` `{episode}` `{season:02d}` `{episode:02d}` `{ext}` `{region}` `{part}` `{date}` `{edition}` `{tmdbid}` `{tmdb}`（渲染为 `{tmdb-71712}`，无 ID 时为空）`{folder}`（渲染为 `良医 (2017) {tmdb-71712}`，年份/ID 缺省时省略） |
-| 版本信息地址 | 默认内置仓库 `update.json` 的 Raw 地址，侧边栏每天打开（或窗口重新可见）时对比一次版本，有新版显示提示条（可点 ✕ 忽略该版本）；点击侧边栏标题旁的版本号可立即检查。清空可关闭检查。开发者模式加载的扩展无法真正自动更新，需手动 `git pull` / 下载后重启浏览器 |
+| 版本信息地址 | 默认内置仓库 `update.json` 的 Raw 地址，侧边栏每天打开（或窗口重新可见）时对比一次版本，有新版显示提示条。提示条中「一键更新」= 授权本地扩展目录后直接把 GitHub 最新代码写入（等价 git pull），重启浏览器生效；「下载」= 前往 Releases 页。点击侧边栏版本号可立即检查。清空地址可关闭检查 |
 
 默认「Emby 标准」：
 
@@ -66,7 +66,7 @@ Chrome / Edge Manifest V3 浏览器扩展：在已登录的 [115 网盘](https:/
 ## 权限说明
 
 - `sidePanel`：打开侧边栏；`storage`：保存设置与 CID；`tabs`：定位当前 115 标签页并读取目录 CID
-- `host_permissions` 仅包含 115 网页与接口（`webapi.115.com`）、TMDB、豆瓣电影搜索，以及 `raw.githubusercontent.com`（可选的版本检查）
+- `host_permissions` 仅包含 115 网页与接口（`webapi.115.com`）、TMDB、豆瓣电影搜索，以及 `raw.githubusercontent.com` / `api.github.com`（版本检查与一键更新）
 - 使用你登录 115 后的 Cookie（由浏览器随请求自动携带；扩展不读取、不存储 Cookie 内容）
 - **不上传、不存储账号密码**
 
