@@ -311,6 +311,46 @@ body.has-results:not(.is-busy) .status-pill {
 
 .meta-hint { color: var(--warn); }
 
+/* ---------- Update banner ---------- */
+
+.update-banner {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid #f0d8a8;
+  border-radius: var(--radius);
+  background: #fdf6e3;
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.update-banner[hidden] { display: none; }
+
+.update-banner-text { font-weight: 600; }
+
+.update-banner-notes {
+  color: var(--muted);
+  flex: 1 1 100%;
+  white-space: pre-line;
+}
+
+.update-banner-notes[hidden] { display: none; }
+
+.update-banner-close {
+  flex-shrink: 0;
+  align-self: center;
+  color: var(--warn);
+}
+
+.update-banner-close:hover:not(:disabled) {
+  background: rgba(154, 112, 0, 0.1);
+  color: var(--warn);
+}
+
 .hint-link {
   color: inherit;
   font-weight: 600;

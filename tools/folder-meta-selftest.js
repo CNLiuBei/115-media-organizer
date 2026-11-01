@@ -4,7 +4,7 @@
 import { formatMediaFolderName, parseFolderMeta, metaFromRelPath, extractTmdbId } from '../lib/folderMeta.js';
 import { calibrationKey, cleanSearchQuery, isEpisodeLockedTv } from '../lib/metadata.js';
 import { buildPreviewRows, isAlreadyOrganized, executeOrganize } from '../lib/organizer.js';
-import { DEFAULT_SETTINGS, resolveLayoutKey } from '../lib/types.js';
+import { DEFAULT_SETTINGS, cmpVersion, resolveLayoutKey } from '../lib/types.js';
 import { resolveOrganizeSettings } from '../lib/settings.js';
 import { buildRenamePlan } from '../lib/rename.js';
 import { buildLayoutTreePreview } from '../lib/folderOptions.js';
@@ -844,6 +844,19 @@ check(
     withBase.pathSegments[0] === '媒体库' && withBase.pathSegments[1] === '新剧',
     withBase.pathDisplay,
   );
+}
+
+/* ---------- types: cmpVersion dotted version compare ---------- */
+{
+  check('cmpVersion 0.0.100 > 0.0.56', cmpVersion('0.0.100', '0.0.56') === 1);
+  check('cmpVersion 0.0.56 < 0.0.100', cmpVersion('0.0.56', '0.0.100') === -1);
+  check('cmpVersion equal', cmpVersion('0.0.56', '0.0.56') === 0);
+  check('cmpVersion 0.1 == 0.1.0', cmpVersion('0.1', '0.1.0') === 0);
+  check('cmpVersion 0.2 > 0.1.9', cmpVersion('0.2', '0.1.9') === 1);
+  check('cmpVersion 1.0 > 0.9.9', cmpVersion('1.0', '0.9.9') === 1);
+  check('cmpVersion empty treated as 0', cmpVersion('', '0.0.1') === -1);
+  check('cmpVersion both empty equal', cmpVersion('', '') === 0);
+  check('cmpVersion ignores junk parts', cmpVersion('0.0.56a', '0.0.56') === 0);
 }
 
 console.log(fail ? `\nFAILED ${fail}` : '\nALL PASS');

@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, FOLDER_LAYOUTS, STORAGE_KEYS, resolveLayoutKey } from '../lib/types.js';
+import { DEFAULT_SETTINGS, FOLDER_LAYOUTS, STORAGE_KEYS, cmpVersion, resolveLayoutKey } from '../lib/types.js';
 import {
   buildPreviewRows,
   summarizeRows,
@@ -2837,6 +2837,69 @@ window.addEventListener('focus', () => {
 // CID is pushed by the content script on navigation and by focus/visibility refresh;
 // no polling needed (the old 2s interval caused constant storage writes).
 
+/* ---------- Update check (GitHub-hosted update.json) ----------
+ * Unpacked extensions cannot self-update; we only compare versions and show a
+ * banner. Throttled to once per 24h via chrome.storage.local; a dismissed
+ * version stays hidden until a newer one appears.
+ */
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+function showUpdateBanner(version, url, notes) {
+  const box = $('updateBanner');
+  if (!box) return;
+  $('updateBannerText').textContent = `发现新版本 v${version}（当前 v${chrome.runtime.getManifest().version}）`;
+  const notesEl = $('updateBannerNotes');
+  const text = String(notes || '').trim().slice(0, 120);
+  notesEl.textContent = text;
+  notesEl.hidden = !text;
+  const link = $('updateBannerLink');
+  if (/^https?:\/\//i.test(String(url || ''))) {
+    link.href = url;
+    link.hidden = false;
+  } else {
+    link.hidden = true;
+  }
+  box.dataset.version = version;
+  box.hidden = false;
+}
+
+$('updateBannerClose')?.addEventListener('click', async () => {
+  const box = $('updateBanner');
+  box.hidden = true;
+  const version = box.dataset.version;
+  if (version) {
+    try {
+      await chrome.storage.local.set({ dismissedUpdateVersion: version });
+    } catch {
+      /* ignore */
+    }
+  }
+});
+
+async function checkForUpdate({ force = false } = {}) {
+  const url = String(state.settings.updateCheckUrl || '').trim();
+  if (!/^https?:\/\//i.test(url)) return;
+  try {
+    const store = await chrome.storage.local.get(['lastUpdateCheckAt', 'dismissedUpdateVersion']);
+    if (!force && Date.now() - (store.lastUpdateCheckAt || 0) < UPDATE_CHECK_INTERVAL_MS) return;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) return;
+    const info = await res.json();
+    await chrome.storage.local.set({ lastUpdateCheckAt: Date.now() });
+    const remote = String(info?.version || '').trim();
+    if (!remote) return;
+    const local = chrome.runtime.getManifest().version;
+    if (cmpVersion(remote, local) > 0 && store.dismissedUpdateVersion !== remote) {
+      showUpdateBanner(remote, info.url, info.notes);
+    }
+  } catch {
+    /* silent: update check must never disturb normal usage */
+  }
+}
+
 (async function init() {
   try {
     const ver = chrome.runtime.getManifest?.()?.version;
@@ -2850,6 +2913,7 @@ window.addEventListener('focus', () => {
   await loadRecentCids();
   await loadCid({ force: true });
   syncViewChips();
+  checkForUpdate();
   try {
     const login = await send('CHECK_LOGIN');
     const cid = $('cidInput').value || '0';
