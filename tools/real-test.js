@@ -55,7 +55,7 @@ try {
   }
   settings = resolveOrganizeSettings({
     ...settings,
-    folderLayout: settings.folderLayout || 'cn_video',
+    folderLayout: settings.folderLayout || 'emby',
     moveFiles: true,
     enableMetadata: true,
   });

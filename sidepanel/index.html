@@ -19,17 +19,17 @@
     <label class="field cid-field">
       <span class="field-label">扫描目录</span>
       <div class="cid-row">
-        <input id="cidInput" type="text" value="" placeholder="点同步读取当前目录 CID" title="目录 CID，可手动改；勿填 0 除非要扫全盘" />
+        <input id="cidInput" type="text" value="" placeholder="点同步读取当前目录 CID" title="目录 CID，不能为 0（网盘根目录）" />
         <button id="btnRefreshCid" class="btn" type="button" title="从当前 115 标签页重新读取">同步</button>
         <select id="recentCid" title="最近扫描过的目录">
           <option value="">最近…</option>
         </select>
       </div>
-      <p class="hint warn-hint" id="cidRootWarn" hidden>当前是网盘根目录 + 含子文件夹 = 将扫描整个网盘。请先「同步」到具体文件夹。</p>
+      <p class="hint warn-hint" id="cidRootWarn" hidden>已禁止扫描网盘根目录（cid=0）。请先在 115 进入具体文件夹后点「同步」，或从「最近」选择子目录。</p>
     </label>
 
     <div class="check-row" role="group" aria-label="扫描选项">
-      <label class="chip" title="递归扫描子文件夹；在根目录(cid=0)下会扫全盘">
+      <label class="chip" title="递归扫描子文件夹（网盘根目录不允许扫描）">
         <input id="scanRecursive" type="checkbox" checked />
         <span>含子文件夹</span>
       </label>
@@ -55,11 +55,12 @@
     <details class="organize-details" id="organizeBox">
       <summary>整理目标与目录结构</summary>
       <div class="organize-body">
-        <label class="field">
+        <div class="field">
           <span class="field-label">目录结构</span>
           <select id="folderLayout"></select>
           <p class="hint" id="folderLayoutHint"></p>
-        </label>
+          <pre class="layout-tree" id="folderLayoutTree" aria-label="Emby 目录树预览"></pre>
+        </div>
         <label class="field">
           <span class="field-label">整理到</span>
           <select id="targetMode">
@@ -161,7 +162,7 @@
         <tr class="empty"><td colspan="3">
           <div class="empty-state">
             <strong>还没有扫描结果</strong>
-            <p>确认上方目录 CID 后点击「扫描」。可先展开「整理目标」选择输出结构。</p>
+            <p>确认上方目录 CID 后点「扫描」。可先展开「整理目标」选择输出结构。</p>
           </div>
         </td></tr>
       </tbody>

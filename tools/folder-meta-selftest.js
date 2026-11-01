@@ -4,9 +4,10 @@
 import { formatMediaFolderName, parseFolderMeta, metaFromRelPath, extractTmdbId } from '../lib/folderMeta.js';
 import { calibrationKey, cleanSearchQuery, isEpisodeLockedTv } from '../lib/metadata.js';
 import { buildPreviewRows, isAlreadyOrganized, executeOrganize } from '../lib/organizer.js';
-import { DEFAULT_SETTINGS } from '../lib/types.js';
+import { DEFAULT_SETTINGS, resolveLayoutKey } from '../lib/types.js';
 import { resolveOrganizeSettings } from '../lib/settings.js';
 import { buildRenamePlan } from '../lib/rename.js';
+import { buildLayoutTreePreview } from '../lib/folderOptions.js';
 import { parseMediaFilename } from '../lib/parser.js';
 import {
   isJunkMediaName,
@@ -30,6 +31,8 @@ import {
   preferCleanPathTitle,
 } from '../lib/pathTitle.js';
 import { detectRegion } from '../lib/region.js';
+import { fileId, seasonNumberFromFolderName, tmdbIdFromFolderName } from '../lib/api115.js';
+import { folderYear } from '../lib/rename.js';
 
 let fail = 0;
 function check(name, cond, detail = '') {
@@ -114,6 +117,7 @@ check('extract id loose', extractTmdbId('foo tmdbid:71712 bar') === '71712');
   const parsed = parseMediaFilename(name, { relPath: rel });
   parsed.tmdbId = '71712';
   parsed.year = '2017';
+  parsed.seriesYear = '2017';
   parsed.title = '良医';
   parsed.region = '欧美剧';
   const plan = buildRenamePlan(parsed, settings);
@@ -131,6 +135,67 @@ check('extract id loose', extractTmdbId('foo tmdbid:71712 bar') === '71712');
     isAlreadyOrganized(row) === true,
     JSON.stringify({ newName: row.newName, path: row.pathDisplay }),
   );
+  check(
+    'scan root above library still organized',
+    isAlreadyOrganized({
+      ...row,
+      item: { _relPath: `媒体库/${rel}` },
+    }) === true,
+  );
+  check(
+    'Season-only current path not organized',
+    isAlreadyOrganized({
+      ...row,
+      item: { _relPath: 'Season 1' },
+    }) === false,
+  );
+}
+
+{
+  const movieRow = {
+    originalName: '流浪地球 (2019).mkv',
+    newName: '流浪地球 (2019).mkv',
+    kind: 'movie',
+    parsed: { tmdbId: '535167', title: '流浪地球', year: '2019', kind: 'movie' },
+    pathSegments: ['电影', '流浪地球 (2019) {tmdb-535167}'],
+    item: { _relPath: '电影/错误片名 (2019) {tmdb-535167}' },
+  };
+  check(
+    'same tmdb wrong movie folder not organized',
+    isAlreadyOrganized(movieRow) === false,
+  );
+  check(
+    'same tmdb matching movie folder organized',
+    isAlreadyOrganized({
+      ...movieRow,
+      item: { _relPath: '电影/流浪地球 (2019) {tmdb-535167}' },
+    }) === true,
+  );
+}
+
+{
+  const settings = resolveOrganizeSettings({ ...DEFAULT_SETTINGS, moveFiles: true });
+  const rel = '剧集/欧美剧/良医 (2017) {tmdb-71712}/Season 01';
+  const name = '良医 - S01E01.mkv';
+  const parsed = parseMediaFilename(name, { relPath: rel });
+  parsed.tmdbId = '71712';
+  parsed.year = '2017';
+  parsed.seriesYear = '2017';
+  parsed.title = '良医';
+  parsed.region = '欧美剧';
+  const plan = buildRenamePlan(parsed, settings);
+  check(
+    'Season 01 matches Season 1',
+    isAlreadyOrganized({
+      originalName: name,
+      newName: plan.newName,
+      pathSegments: plan.pathSegments,
+      kind: 'tv',
+      parsed,
+      item: { _relPath: rel },
+    }) === true,
+    JSON.stringify({ planned: plan.pathSegments, newName: plan.newName }),
+  );
 }
 
 {
@@ -145,8 +210,12 @@ check('extract id loose', extractTmdbId('foo tmdbid:71712 bar') === '71712');
 
 check('junk sample', isJunkMediaName('Movie.Sample.mkv') === true);
 check('junk trailer', isJunkMediaName('Show.Trailer.mp4') === true);
+check('junk trailer after year', isJunkMediaName('Movie.2023.Trailer.1080p.mkv') === true);
 check('junk 预告', isJunkMediaName('电影名-预告片.mkv') === true);
 check('not junk', isJunkMediaName('良医 - S01E01.mkv') === false);
+check('Trailer Park Boys not junk', isJunkMediaName('Trailer.Park.Boys.S01E01.mkv') === false);
+check('The.Trailer.2023 not junk', isJunkMediaName('The.Trailer.2023.mkv') === false);
+check('Preview.Show not junk', isJunkMediaName('Preview.Show.S01E01.mkv') === false);
 check(
   'ad dump name',
   isAdDumpName('【更多无水印高品质资源请访问 www.bthdting.com】.MKV') === true,
@@ -165,6 +234,18 @@ check(
 check(
   'tiny clip not keepable',
   isKeepableVideoFile({ n: 'Show.S01E01.mkv', s: 800_000 }, { minSizeMB: 0 }) === false,
+);
+check(
+  'tiny named episode not size-junk',
+  isCleanupJunkFile({ n: 'Show.S01E01.mkv', s: 800_000 }, { minSizeMB: 50 }) === false,
+);
+check(
+  'tiny unnamed clip still junk',
+  isCleanupJunkFile({ n: 'random_clip.mkv', s: 800_000 }) === true,
+);
+check(
+  '40MB named episode keepable without minSize',
+  isKeepableVideoFile({ n: 'Show.S01E01.mkv', s: 40 * 1024 * 1024 }, { minSizeMB: 0 }) === true,
 );
 check(
   '25MB no-signal video is cleanup junk',
@@ -399,6 +480,19 @@ check(
 }
 
 {
+  const videos = [{ fid: 'v1', n: 'Show.1x02.mkv', _relPath: 'A', fc: '1' }];
+  const extras = attachCompanions(videos, [
+    ...videos,
+    { fid: 's1', n: 'Show.S01E02.zh-hans.srt', _relPath: 'A', fc: '1' },
+  ]);
+  check(
+    'companion 1x02 to S01E02',
+    extras.length === 1 && extras[0]._companionOf === 'v1',
+    JSON.stringify(extras),
+  );
+}
+
+{
   // Same filename in different folders must not cross-wire subtitles
   const videos = [
     { fid: 'va', n: 'Show.S01E01.mkv', _relPath: 'A', fc: '1' },
@@ -473,6 +567,26 @@ check(
     results.some((r) => r.id === 'b' && !r.ok)
       && results.some((r) => r.id === 'a' && r.ok)
       && !calls.some((c) => c[0] === 'move' && c[1].includes('b')),
+    JSON.stringify({ results, calls }),
+  );
+}
+
+{
+  const calls = [];
+  const api = {
+    async ensurePath() { throw new Error('mkdir fail'); },
+    async batchRenameChunked(map) { calls.push(['rename', { ...map }]); },
+    async batchRename(map) { calls.push(['rename', { ...map }]); },
+    async moveFilesBatched() { calls.push(['move']); },
+    async moveFiles() { calls.push(['move']); },
+  };
+  const results = await executeOrganize(api, [
+    { id: 'a', selected: true, originalName: 'A.mkv', newName: 'B.mkv', pathSegments: ['Show'] },
+  ], { rootCid: 'root', moveFiles: true, delayMs: 0 });
+  check(
+    'mkdir fail does not rename',
+    results.some((r) => r.id === 'a' && !r.ok)
+      && !calls.some((c) => c[0] === 'rename'),
     JSON.stringify({ results, calls }),
   );
 }
@@ -568,6 +682,107 @@ check(
     }) === '日韩剧',
   );
 }
+
+{
+  const settings = resolveOrganizeSettings({ ...DEFAULT_SETTINGS, moveFiles: true, folderLayout: 'cn_video' });
+  const withSeries = buildRenamePlan(
+    {
+      kind: 'tv', title: '良医', year: '2024', seriesYear: '2017', tmdbId: '71712',
+      region: '欧美剧', season: 2, episode: 1, ext: '.mkv',
+    },
+    settings,
+  );
+  check(
+    'S02 folder uses series year not filename year',
+    withSeries.pathSegments.some((s) => s.includes('2017') && s.includes('tmdb-71712'))
+      && !withSeries.pathSegments.some((s) => /\(2024\)/.test(s)),
+    JSON.stringify(withSeries.pathSegments),
+  );
+  check(
+    'tv folderYear prefers seriesYear',
+    folderYear({ kind: 'tv', year: '2024', seriesYear: '2017', season: 2, episode: 1 }) === '2017',
+  );
+  check(
+    'tv folderYear omits episode filename year',
+    folderYear({ kind: 'tv', year: '2024', season: 2, episode: 1 }) === '',
+  );
+}
+
+check(
+  'tmdb id from existing show folder',
+  tmdbIdFromFolderName('良医 (2017) {tmdb-71712}') === '71712'
+    && tmdbIdFromFolderName('The Good Doctor (2017) {tmdb-71712}') === '71712',
+);
+check('Season 01 number is 1', seasonNumberFromFolderName('Season 01') === 1);
+check('Season 1 number is 1', seasonNumberFromFolderName('Season 1') === 1);
+
+check(
+  'subtitle without fid is not parent cid',
+  fileId({ n: 'Show.S01E01.zh.srt', cid: 'parent', fc: '1' }) === '',
+);
+check(
+  'file fid still used',
+  fileId({ n: 'Show.S01E01.mkv', fid: 'abc', cid: 'parent', fc: '1' }) === 'abc',
+);
+
+{
+  const emby = resolveOrganizeSettings({ ...DEFAULT_SETTINGS, moveFiles: true, folderLayout: 'emby' });
+  const tv = buildRenamePlan(
+    {
+      kind: 'tv', title: '良医', year: '2017', seriesYear: '2017', tmdbId: '71712',
+      region: '欧美剧', season: 1, episode: 1, ext: '.mkv',
+    },
+    emby,
+  );
+  const movie = buildRenamePlan(
+    { kind: 'movie', title: '流浪地球', year: '2019', tmdbId: '535167', ext: '.mkv' },
+    emby,
+  );
+  check(
+    'emby tv tree',
+    tv.pathDisplay === '剧集/良医 (2017) {tmdb-71712}/Season 01'
+      && tv.newName === '良医 - S01E01.mkv',
+    `${tv.pathDisplay} :: ${tv.newName}`,
+  );
+  check(
+    'emby movie tree',
+    movie.pathDisplay === '电影/流浪地球 (2019) {tmdb-535167}'
+      && movie.newName === '流浪地球 (2019).mkv',
+    `${movie.pathDisplay} :: ${movie.newName}`,
+  );
+  check('jellyfin alias → emby_en', resolveLayoutKey('jellyfin') === 'emby_en');
+  check('typed alias → emby', resolveLayoutKey('typed') === 'emby');
+  const tree = buildLayoutTreePreview({ folderLayout: 'emby' });
+  check(
+    'emby preview tree',
+    /电影/.test(tree) && /剧集/.test(tree) && /Season 01/.test(tree) && /流浪地球/.test(tree),
+    tree,
+  );
+}
+
+check(
+  'KR origin beats 美剧 filename',
+  detectRegion({
+    filename: '【美剧】Show.S02E01.mkv',
+    title: 'Show',
+    originCountries: ['KR'],
+  }) === '日韩剧',
+);
+check(
+  'SubsPlease + KR stays 日韩 not 动漫',
+  detectRegion({
+    filename: '[SubsPlease] Show - 12 (1080p).mkv',
+    originCountries: ['KR'],
+    isAnime: true,
+  }) === '日韩剧',
+);
+check(
+  'region folder in path still wins',
+  detectRegion({
+    relPath: '剧集/欧美剧/良医',
+    originCountries: ['KR'],
+  }) === '欧美剧',
+);
 
 console.log(fail ? `\nFAILED ${fail}` : '\nALL PASS');
 process.exit(fail ? 1 : 0);

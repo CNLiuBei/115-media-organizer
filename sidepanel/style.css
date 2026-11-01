@@ -274,6 +274,21 @@ body.has-results .actions-primary {
   padding-top: 8px;
 }
 
+.layout-tree {
+  margin: 0;
+  padding: 8px 10px;
+  background: #f4f8fc;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text);
+  white-space: pre;
+  overflow-x: auto;
+  max-height: 180px;
+}
+
 .target-pick {
   display: flex;
   gap: 6px;
@@ -459,7 +474,7 @@ body.has-results .actions-primary {
   display: grid;
   gap: 6px;
   justify-items: center;
-  max-width: 280px;
+  max-width: 360px;
   margin: 0 auto;
 }
 
@@ -987,10 +1002,15 @@ tr.empty td {
 }
 
 .picker-list .empty {
+  display: block;
   padding: 28px 12px;
   text-align: center;
   color: var(--muted);
   cursor: default;
+}
+
+.picker-list .empty .empty-state {
+  max-width: 240px;
 }
 
 .picker-list .empty:hover { background: transparent; }

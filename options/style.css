@@ -86,6 +86,24 @@ section h2 {
   color: var(--primary);
 }
 
+.layout-tree {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  background: #f4f8fc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  white-space: pre;
+  overflow-x: auto;
+}
+
+#templateSections[hidden] {
+  display: none;
+}
+
 .checks {
   display: flex;
   flex-wrap: wrap;

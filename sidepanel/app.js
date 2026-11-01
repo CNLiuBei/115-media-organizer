@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, FOLDER_LAYOUTS, STORAGE_KEYS } from '../lib/types.js';
+import { DEFAULT_SETTINGS, FOLDER_LAYOUTS, STORAGE_KEYS, resolveLayoutKey } from '../lib/types.js';
 import {
   buildPreviewRows,
   summarizeRows,
@@ -22,7 +22,7 @@ import {
 import { summarizeFilter } from '../lib/filter.js';
 import { buildRenamePlan } from '../lib/rename.js';
 import { resolveOrganizeSettings } from '../lib/settings.js';
-import { resolveTargetRootCid } from '../lib/folderOptions.js';
+import { resolveTargetRootCid, buildLayoutTreePreview } from '../lib/folderOptions.js';
 import { cleanFoldersWithoutVideo } from '../lib/cleanup.js';
 import { REGION_FOLDERS, detectRegion } from '../lib/region.js';
 
@@ -53,6 +53,8 @@ const state = {
   cleanupAbort: null,
   /** Last organize failed ids for retry */
   lastFailedIds: [],
+  /** Last finished scan stats, used for empty-state copy */
+  lastScan: null,
 };
 
 const UI_PREFS_KEY = 'sidepanelUiPrefs';
@@ -88,7 +90,7 @@ async function saveSettings(partial = {}) {
 
 function fillFolderLayoutSelect() {
   const sel = $('folderLayout');
-  const current = sel.value || state.settings.folderLayout || 'standard';
+  const current = resolveLayoutKey(sel.value || state.settings.folderLayout || 'emby');
   sel.innerHTML = '';
   for (const [key, layout] of Object.entries(FOLDER_LAYOUTS)) {
     const opt = document.createElement('option');
@@ -96,7 +98,7 @@ function fillFolderLayoutSelect() {
     opt.textContent = layout.label;
     sel.appendChild(opt);
   }
-  sel.value = FOLDER_LAYOUTS[current] ? current : 'standard';
+  sel.value = FOLDER_LAYOUTS[current] ? current : 'emby';
 }
 
 function formatTargetLabel(name, cid) {
@@ -130,7 +132,7 @@ function applyOrganizeUiFromSettings() {
   $('skipCalibrateOrganized').checked = s.skipCalibrateOrganized !== false;
   $('moveFiles').checked = s.moveFiles !== false;
   $('cleanEmptyFolders').checked = s.cleanEmptyFolders !== false;
-  $('folderLayout').value = FOLDER_LAYOUTS[s.folderLayout] ? s.folderLayout : 'standard';
+  $('folderLayout').value = resolveLayoutKey(s.folderLayout);
   $('targetMode').value = s.targetMode === 'cid' ? 'cid' : 'scan';
   $('targetCid').value = s.targetCid != null ? String(s.targetCid) : '0';
   $('targetBasePath').value = s.targetBasePath || '';
@@ -184,9 +186,11 @@ async function pushRecentCid(cid, name = '') {
 }
 
 function updateFolderLayoutHint() {
-  const key = $('folderLayout').value || 'standard';
-  const layout = FOLDER_LAYOUTS[key] || FOLDER_LAYOUTS.standard;
+  const key = resolveLayoutKey($('folderLayout').value);
+  const layout = FOLDER_LAYOUTS[key] || FOLDER_LAYOUTS.emby;
   $('folderLayoutHint').textContent = layout.desc || '';
+  const treeEl = $('folderLayoutTree');
+  if (treeEl) treeEl.textContent = buildLayoutTreePreview(currentOrganizeSettings());
 }
 
 function updateTargetModeUi() {
@@ -208,7 +212,7 @@ function currentOrganizeSettings() {
     ...state.settings,
     enableMetadata: $('enableMeta').checked,
     moveFiles: $('moveFiles').checked,
-    folderLayout: $('folderLayout').value || 'standard',
+    folderLayout: resolveLayoutKey($('folderLayout').value),
     targetMode: $('targetMode').value === 'cid' ? 'cid' : 'scan',
     targetCid: $('targetCid').value.trim() || '0',
     targetCidName: state.settings.targetCidName || '',
@@ -221,7 +225,7 @@ function readOrganizeFields() {
     moveFiles: $('moveFiles').checked,
     cleanEmptyFolders: $('cleanEmptyFolders').checked,
     scanRecursive: $('scanRecursive').checked,
-    folderLayout: $('folderLayout').value || 'standard',
+    folderLayout: resolveLayoutKey($('folderLayout').value),
     targetMode: $('targetMode').value === 'cid' ? 'cid' : 'scan',
     targetCid: $('targetCid').value.trim() || '0',
     targetCidName: state.settings.targetCidName || '',
@@ -256,7 +260,7 @@ function rebuildPlans() {
     const stem = row.originalName.includes('.')
       ? row.originalName.slice(0, row.originalName.lastIndexOf('.'))
       : row.originalName;
-    const lang = stem.match(/\.(zh|zh-cn|chs|cht|en|eng|jp|jpn|sc|tc)$/i)?.[0] || '';
+    const lang = stem.match(/\.(zh|zh-cn|zh-hans|zh-hant|chs|cht|en|eng|jp|jpn|sc|tc|und)$/i)?.[0] || '';
     row.newName = `${parentBase}${lang}${ext}`;
     row.pathSegments = [...parent.pathSegments];
     row.pathDisplay = parent.pathDisplay;
@@ -322,9 +326,10 @@ async function loadCid({ quiet = false, force = false } = {}) {
     }
     if (!quiet) {
       setStatus(
-        `已同步目录 cid=${$('cidInput').value}` +
-        (result?.source ? ` (${result.source})` : '') +
-        (cid === '0' ? ' · 网盘根目录' : ''),
+        isDriveRootCid(cid)
+          ? '已同步到网盘根目录，已禁止扫描。请进入具体文件夹后再点同步'
+          : `已同步目录 cid=${$('cidInput').value}` +
+            (result?.source ? ` (${result.source})` : ''),
       );
     }
     updateCidRootWarning();
@@ -336,12 +341,23 @@ async function loadCid({ quiet = false, force = false } = {}) {
   return null;
 }
 
+function isDriveRootCid(cid) {
+  const v = String(cid ?? '').trim();
+  return !v || v === '0';
+}
+
+function updateScanButtonState() {
+  const root = isDriveRootCid($('cidInput')?.value);
+  if ($('btnScan')) {
+    $('btnScan').disabled = state.scanning || state.running || root;
+  }
+}
+
 function updateCidRootWarning() {
   const el = $('cidRootWarn');
-  if (!el) return;
-  const cid = ($('cidInput').value || '').trim() || '0';
-  const recursive = $('scanRecursive')?.checked !== false;
-  el.hidden = !(cid === '0' && recursive);
+  const root = isDriveRootCid($('cidInput')?.value);
+  if (el) el.hidden = !root;
+  updateScanButtonState();
 }
 
 function formatSize(n) {
@@ -602,6 +618,7 @@ function applyEnrichToParsed(parsed, hit, originalName = '') {
     localTitle,
     title: hit.title || parsed.title,
     year: hit.year || parsed.year,
+    seriesYear: hit.year || parsed.seriesYear,
     kind: hit.kind || parsed.kind,
     metaSource: hit.source,
     metaScore: hit.score,
@@ -728,18 +745,90 @@ async function runCalibration(targetRows, { signal, quiet = false } = {}) {
   return { hitCount, total: byKey.size, aborted };
 }
 
+function emptyStateInner(title, hint) {
+  return `<div class="empty-state">
+    <strong>${escapeHtml(title)}</strong>
+    ${hint ? `<p>${hint}</p>` : ''}
+  </div>`;
+}
+
+function emptyStateRow(title, hint) {
+  return `<tr class="empty"><td colspan="3">${emptyStateInner(title, hint)}</td></tr>`;
+}
+
+function scanEmptyCopy() {
+  const scan = state.lastScan;
+  if (!scan) {
+    return {
+      title: '还没有扫描结果',
+      hint: '确认上方目录 CID 后点「扫描」。可先展开「整理目标」选择输出结构。',
+    };
+  }
+  if (scan.aborted && !scan.files) {
+    return {
+      title: '扫描已停止',
+      hint: '还没拉到文件。点「扫描」再试一次。',
+    };
+  }
+  if (!scan.files) {
+    return {
+      title: '这个目录是空的',
+      hint: scan.recursive
+        ? '当前目录和子文件夹里都没有文件。换一个文件夹后再扫。'
+        : '当前层没有文件。勾选「含子文件夹」再扫，或换一个目录。',
+    };
+  }
+  const bits = [];
+  if (scan.tooSmall) bits.push(`${scan.tooSmall} 个小于体积下限`);
+  if (scan.other) bits.push(`${scan.other} 个非媒体文件`);
+  if (scan.junk) bits.push(`${scan.junk} 个样本/预告`);
+  if (!scan.video && !scan.audio) bits.push('没有识别到视频或音频');
+  return {
+    title: '没有可整理的媒体',
+    hint: bits.length
+      ? `扫到 ${scan.files} 个文件，但没有可整理项（${bits.join('，')}）。可在设置里调低最小体积，或换一个目录。`
+      : `扫到 ${scan.files} 个文件，但没有可整理的媒体。检查扩展名和最小体积后再扫。`,
+  };
+}
+
+const VIEW_LABELS = {
+  all: '全部',
+  need: '待整理',
+  done: '已在位',
+  low: '低置信',
+  conflict: '冲突',
+};
+
+function filterEmptyCopy(filterQ, view) {
+  const viewLabel = VIEW_LABELS[view] || '全部';
+  if (filterQ) {
+    return {
+      title: `没有匹配「${filterQ}」`,
+      hint: view && view !== 'all'
+        ? `当前在「${viewLabel}」视图。改关键词，或按 Esc 清空筛选。`
+        : '改关键词，或按 Esc 清空筛选。',
+    };
+  }
+  if (view === 'need') {
+    return { title: '没有待整理的作品', hint: '当前视图下都已在目标位置。可切到「已在位」或「全部」。' };
+  }
+  if (view === 'done') {
+    return { title: '没有已在位的作品', hint: '当前视图下都还没整理。可切到「待整理」或「全部」。' };
+  }
+  if (view === 'low') {
+    return { title: '没有低置信项', hint: '校准结果看起来都比较稳。可切回「全部」。' };
+  }
+  if (view === 'conflict') {
+    return { title: '没有路径冲突', hint: '目标路径没有撞车。可切回「全部」。' };
+  }
+  return { title: '当前筛选没有匹配条目', hint: '试试「全部」，或清空搜索。' };
+}
+
 function renderTable() {
   const tbody = $('tbody');
   if (!state.rows.length) {
-    tbody.innerHTML = `
-      <tr class="empty">
-        <td colspan="3">
-          <div class="empty-state">
-            <strong>还没有扫描结果</strong>
-            <p>确认上方目录 CID 后点击「扫描」。可先展开「整理目标」选择输出结构。</p>
-          </div>
-        </td>
-      </tr>`;
+    const empty = scanEmptyCopy();
+    tbody.innerHTML = emptyStateRow(empty.title, empty.hint);
     $('btnRun').disabled = true;
     $('btnSelectAll').disabled = true;
     $('btnSelectNone').disabled = true;
@@ -783,7 +872,8 @@ function renderTable() {
 
   tbody.innerHTML = '';
   if (!visibleGroups.length) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="3">当前筛选没有匹配条目，试试「全部」或清空搜索</td></tr>';
+    const empty = filterEmptyCopy(listCtx.filterQ, listCtx.view);
+    tbody.innerHTML = emptyStateRow(empty.title, empty.hint);
   }
   for (const group of visibleGroups) {
     const primary = group.rows.find((r) => !r.companionOf) || group.rows[0];
@@ -952,7 +1042,7 @@ function syncCompanionsForParent(parent) {
     const stem = row.originalName.includes('.')
       ? row.originalName.slice(0, row.originalName.lastIndexOf('.'))
       : row.originalName;
-    const lang = stem.match(/\.(zh|zh-cn|chs|cht|en|eng|jp|jpn|sc|tc)$/i)?.[0] || '';
+    const lang = stem.match(/\.(zh|zh-cn|zh-hans|zh-hant|chs|cht|en|eng|jp|jpn|sc|tc|und)$/i)?.[0] || '';
     row.newName = `${parentBase}${lang}${ext}`;
     row.pathSegments = [...(parent.pathSegments || [])];
     row.pathDisplay = parent.pathDisplay;
@@ -1403,8 +1493,13 @@ $('targetMode').addEventListener('change', async () => {
 });
 
 $('targetBasePath').addEventListener('change', async () => {
+  updateFolderLayoutHint();
   await saveSettings(readOrganizeFields());
   rebuildPlans();
+});
+
+$('targetBasePath').addEventListener('input', () => {
+  updateFolderLayoutHint();
 });
 
 $('btnUseScanAsTarget').addEventListener('click', async () => {
@@ -1472,7 +1567,7 @@ function closeFolderPicker() {
 
 async function loadPicker(cid = '0') {
   $('pickerStatus').textContent = '加载中…';
-  $('pickerList').innerHTML = '<li class="empty">加载中…</li>';
+    $('pickerList').innerHTML = `<li class="empty">${emptyStateInner('正在加载…', '正在读取子文件夹。')}</li>`;
   try {
     const data = await api.listFolders(cid);
     state.picker = {
@@ -1484,7 +1579,7 @@ async function loadPicker(cid = '0') {
     renderPicker();
   } catch (err) {
     $('pickerStatus').textContent = '加载失败';
-    $('pickerList').innerHTML = `<li class="empty">${escapeHtml(err.message || String(err))}</li>`;
+    $('pickerList').innerHTML = `<li class="empty">${emptyStateInner('加载失败', err.message || String(err))}</li>`;
   }
 }
 
@@ -1495,7 +1590,9 @@ function pathDisplay(path) {
 function renderPicker() {
   const { cid, parentCid, path, folders } = state.picker;
   $('btnPickerUp').disabled = cid === '0';
-  $('pickerStatus').textContent = `${folders.length} 个子文件夹`;
+  $('pickerStatus').textContent = folders.length
+    ? `${folders.length} 个子文件夹`
+    : '没有子文件夹 · 可选择当前目录';
   $('pickerCurrent').textContent = `当前：${pathDisplay(path)}`;
 
   const crumb = $('pickerCrumb');
@@ -1518,7 +1615,10 @@ function renderPicker() {
   const list = $('pickerList');
   list.innerHTML = '';
   if (!folders.length) {
-    list.innerHTML = '<li class="empty">此目录下没有子文件夹</li>';
+    list.innerHTML = `<li class="empty">${emptyStateInner(
+      '此目录下没有子文件夹',
+      '可以直接选择当前目录，或点「上级」换一层。',
+    )}</li>`;
     return;
   }
   for (const folder of folders) {
@@ -1558,7 +1658,7 @@ document.addEventListener('keydown', (e) => {
 
 function setScanningUi(scanning) {
   state.scanning = scanning;
-  $('btnScan').disabled = scanning || state.running;
+  updateScanButtonState();
   $('btnStopScan').hidden = !scanning;
   $('btnRun').disabled = scanning || state.running || !state.rows.some((r) => r.selected);
 }
@@ -1576,22 +1676,14 @@ async function scan() {
   if (!state.cidDirty) {
     await loadCid({ quiet: true, force: true });
   }
-  const cid = $('cidInput').value.trim() || '0';
+  const cid = $('cidInput').value.trim();
   const recursive = $('scanRecursive').checked;
 
-  // Guard: cid=0 + recursive ≈ entire cloud drive
-  if (cid === '0' && recursive) {
-    const ok = confirm(
-      '当前扫描目录是网盘根目录（cid=0），且勾选了「含子文件夹」。\n\n' +
-      '这会递归扫描整个 115 网盘，可能极慢并产生海量结果。\n\n' +
-      '建议：先在 115 页面进入具体文件夹，点「同步」，或手动填入目录 CID。\n\n' +
-      '仍要继续扫描全盘吗？',
-    );
-    if (!ok) {
-      setStatus('已取消扫描（根目录保护）');
-      log('已取消：避免在网盘根目录递归扫描全盘', 'info');
-      return;
-    }
+  if (isDriveRootCid(cid)) {
+    updateCidRootWarning();
+    setStatus('已阻止：不能扫描网盘根目录');
+    log('已阻止扫描：当前是网盘根目录（cid=0）。请先在 115 进入具体文件夹后点「同步」，或手动填入子目录 CID。', 'error');
+    return;
   }
 
   state.rootCid = cid;
@@ -1668,17 +1760,26 @@ async function scan() {
 
     // 先出预览表，避免等 TMDB 时列表一直空白
     const filterStats = summarizeFilter(files, settings);
+    state.lastScan = {
+      cid,
+      recursive,
+      aborted,
+      files: files.length,
+      kept: filterStats.kept,
+      video: filterStats.video,
+      audio: filterStats.audio,
+      junk: filterStats.junk,
+      tooSmall: filterStats.tooSmall,
+      other: filterStats.other,
+    };
     log(
       `筛选：视频 ${filterStats.video} · 音频 ${filterStats.audio}` +
       (filterStats.junk ? ` · 样本/预告 ${filterStats.junk}` : '') +
       ` · 过小 ${filterStats.tooSmall} · 其他 ${filterStats.other} → 可整理 ${filterStats.kept}`,
     );
-    if (filterStats.kept === 0 && files.length > 0) {
-      const tips = [];
-      if (filterStats.tooSmall) tips.push(`有 ${filterStats.tooSmall} 个小于 ${settings.minSizeMB || 0}MB`);
-      if (filterStats.other) tips.push(`有 ${filterStats.other} 个非媒体扩展名`);
-      if (filterStats.video === 0 && filterStats.audio === 0) tips.push('未识别到视频/音频');
-      log(`没有可整理的媒体文件${tips.length ? `（${tips.join('；')}）` : ''}`, 'error');
+    if (filterStats.kept === 0) {
+      const empty = scanEmptyCopy();
+      log(`${empty.title}${empty.hint ? `：${empty.hint}` : ''}`, files.length ? 'error' : 'info');
     }
 
     await hydrateTmdbCache();
@@ -1716,7 +1817,10 @@ async function scan() {
         : ' · 输出到扫描目录下')
       : '';
     const calHint = calibrated ? ` · 已校准 ${calibrated}` : '';
-    if (aborted) {
+    if (!state.rows.length) {
+      const empty = scanEmptyCopy();
+      setStatus(aborted ? `扫描已停止 · ${empty.title}` : empty.title);
+    } else if (aborted) {
       setStatus(`扫描已停止 · ${state.rows.length} 个媒体文件${calHint}${targetHint}`);
       log(`已停止，可整理当前 ${state.rows.length} 项`, 'ok');
     } else {
@@ -1725,6 +1829,21 @@ async function scan() {
     }
   } catch (err) {
     if (err?.name === 'AbortError' || /已停止/.test(err?.message || '')) {
+      if (!state.rows.length) {
+        state.lastScan = {
+          cid,
+          recursive,
+          aborted: true,
+          files: 0,
+          kept: 0,
+          video: 0,
+          audio: 0,
+          junk: 0,
+          tooSmall: 0,
+          other: 0,
+        };
+        renderTable();
+      }
       setStatus('扫描已停止');
       log('已停止扫描', 'ok');
     } else {
@@ -1741,7 +1860,7 @@ function setOrganizeUi(running) {
   state.running = running;
   $('btnRun').disabled = running || state.scanning || !state.rows.some((r) => r.selected);
   $('btnStopRun').hidden = !running;
-  $('btnScan').disabled = running || state.scanning;
+  updateScanButtonState();
   $('btnClean').disabled = running || state.scanning;
 }
 
@@ -1938,7 +2057,6 @@ async function runCleanup({ quietConfirm = false, reason = '手动清理' } = {}
   const targetRoot = resolveTargetRootCid(org.targetMode, state.rootCid || '0', org.targetCid);
   const delayMs = Number(state.settings.requestDelayMs) || 300;
   const protectCids = [scanCid, targetRoot, '0'];
-  const minSizeMB = Number(state.settings.minSizeMB) || 50;
   const abort = new AbortController();
   state.cleanupAbort = abort;
 
@@ -1952,7 +2070,6 @@ async function runCleanup({ quietConfirm = false, reason = '手动清理' } = {}
   try {
     const result = await cleanFoldersWithoutVideo(api, scanCid, {
       delayMs,
-      minSizeMB,
       purgeJunkFiles: true,
       protectCids,
       signal: abort.signal,
@@ -2033,6 +2150,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
       if (!state.cidDirty) {
         $('cidInput').value = cid;
         state.rootCid = cid;
+        updateCidRootWarning();
         setStatus(`已同步目录 cid=${cid}`);
       }
     }
@@ -2074,9 +2192,12 @@ setInterval(() => {
   try {
     const login = await send('CHECK_LOGIN');
     const cid = $('cidInput').value || '0';
+    updateCidRootWarning();
     setStatus(
       login.loggedIn
-        ? `已登录 · 当前目录 cid=${cid}`
+        ? (isDriveRootCid(cid)
+          ? '已登录 · 当前是网盘根目录，请进入子文件夹后点「同步」再扫描'
+          : `已登录 · 当前目录 cid=${cid}`)
         : '未登录 115，请先打开 115.com',
     );
   } catch {

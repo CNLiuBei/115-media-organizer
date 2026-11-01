@@ -1,4 +1,5 @@
-import { DEFAULT_SETTINGS, FOLDER_LAYOUTS, STORAGE_KEYS } from '../lib/types.js';
+import { DEFAULT_SETTINGS, FOLDER_LAYOUTS, STORAGE_KEYS, resolveLayoutKey } from '../lib/types.js';
+import { buildLayoutTreePreview } from '../lib/folderOptions.js';
 
 const fields = [
   'tmdbApiKey',
@@ -40,9 +41,14 @@ function fillFolderLayoutSelect() {
 }
 
 function updateFolderLayoutHint() {
-  const key = document.getElementById('folderLayout').value || 'standard';
-  const layout = FOLDER_LAYOUTS[key] || FOLDER_LAYOUTS.standard;
+  const key = resolveLayoutKey(document.getElementById('folderLayout').value);
+  const layout = FOLDER_LAYOUTS[key] || FOLDER_LAYOUTS.emby;
   document.getElementById('folderLayoutHint').textContent = layout.desc || '';
+  const custom = key === 'custom';
+  const sections = document.getElementById('templateSections');
+  if (sections) sections.hidden = !custom;
+  const tree = document.getElementById('folderLayoutTree');
+  if (tree) tree.textContent = buildLayoutTreePreview(read());
 }
 
 function fill(settings) {
@@ -58,7 +64,7 @@ function fill(settings) {
     const el = document.getElementById(key);
     if (!el) continue;
     if (key === 'folderLayout') {
-      el.value = FOLDER_LAYOUTS[settings.folderLayout] ? settings.folderLayout : 'standard';
+      el.value = resolveLayoutKey(settings.folderLayout);
     } else if (key === 'targetMode') {
       el.value = settings.targetMode === 'cid' ? 'cid' : 'scan';
     }
@@ -78,7 +84,7 @@ function read(base = {}) {
     const el = document.getElementById(key);
     if (el) data[key] = el.checked;
   }
-  data.folderLayout = document.getElementById('folderLayout').value || 'standard';
+  data.folderLayout = resolveLayoutKey(document.getElementById('folderLayout').value);
   data.targetMode = document.getElementById('targetMode').value === 'cid' ? 'cid' : 'scan';
   return data;
 }
@@ -90,6 +96,15 @@ async function load() {
 }
 
 document.getElementById('folderLayout').addEventListener('change', updateFolderLayoutHint);
+
+for (const id of [
+  'tvPathTemplate', 'tvNameTemplate',
+  'moviePathTemplate', 'movieNameTemplate',
+  'unknownPathTemplate', 'unknownNameTemplate',
+  'targetBasePath',
+]) {
+  document.getElementById(id)?.addEventListener('input', updateFolderLayoutHint);
+}
 
 document.getElementById('form').addEventListener('submit', async (e) => {
   e.preventDefault();

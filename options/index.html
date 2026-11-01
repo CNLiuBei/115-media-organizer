@@ -37,6 +37,7 @@
           <span>最小体积 (MB)</span>
           <input id="minSizeMB" type="number" min="0" step="1" />
         </label>
+        <p class="hint">只用于扫描预览筛选，不作为清理时「是否还有正片」的门槛。填 0 表示不按体积过滤。</p>
         <label class="row">
           <span>扫描/校准请求间隔 (ms)</span>
           <input id="requestDelayMs" type="number" min="0" step="50" />
@@ -62,6 +63,7 @@
           <select id="folderLayout"></select>
         </label>
         <p class="hint" id="folderLayoutHint"></p>
+        <pre class="layout-tree" id="folderLayoutTree" aria-label="Emby 目录树预览"></pre>
         <label class="row">
           <span>默认整理到</span>
           <select id="targetMode">
@@ -73,9 +75,10 @@
           <span>根路径前缀（可选）</span>
           <input id="targetBasePath" type="text" placeholder="例如：媒体库" />
         </label>
-        <p class="hint">具体目标目录请在侧边栏用「选择…」浏览网盘文件夹。自定义结构请改下方路径模板，并将目录结构选为「自定义」。</p>
+        <p class="hint">Emby 标准树：电影、剧集分库；剧集用 <code>Season 01</code>；文件夹为 <code>片名 (年) {tmdb-id}</code>。自定义结构请选「自定义」并改下方模板。</p>
       </section>
 
+      <div id="templateSections">
       <section>
         <h2>剧集模板</h2>
         <label class="row">
@@ -111,6 +114,7 @@
           <input id="unknownNameTemplate" type="text" />
         </label>
       </section>
+      </div>
 
       <div class="footer">
         <button type="submit" class="btn primary">保存</button>
