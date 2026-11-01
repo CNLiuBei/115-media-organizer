@@ -1050,6 +1050,9 @@ td .plan-stack .plan-path-row .plan-path {
   background: #fdecea;
   color: var(--danger);
 }
+/* display:inline-block above would win over the UA [hidden] rule */
+.tag-warn[hidden],
+.collide-flag[hidden] { display: none; }
 .tag-done {
   background: #e6f4ec;
   color: var(--ok);

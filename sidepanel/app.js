@@ -1260,7 +1260,6 @@ function renderTable() {
       gaps.length
         ? `缺集 ${gaps.slice(0, 6).map((g) => g.key).join(',')}${gaps.length > 6 ? '…' : ''}`
         : '',
-      groupCollide ? '路径冲突' : '',
     ].filter(Boolean).join(' · ');
     const calib = calibrationHint(primary.parsed);
 
@@ -1268,6 +1267,8 @@ function renderTable() {
     const head = document.createElement('tr');
     head.className = `group-head${collapsed ? ' is-collapsed' : ''}${groupDone ? ' is-done' : ''}${groupLow ? ' is-low' : ''}${dups.length || groupCollide ? ' is-dup' : ''}${gaps.length ? ' is-gap' : ''}`;
     head.dataset.group = group.key;
+    // 重复集不随勾选变化；冲突集随勾选变化（refreshSelectionUi 依赖此标记恢复 is-dup）
+    head.dataset.dup = dups.length ? '1' : '';
     head.innerHTML = `
       <td class="col-check">
         <input type="checkbox" data-role="group-select" data-group="${escapeAttr(group.key)}"
@@ -1294,7 +1295,7 @@ function renderTable() {
                 <span>tmdb</span>
                 <input type="text" class="group-tmdb-input" data-role="group-tmdbid" data-group="${escapeAttr(group.key)}" value="${escapeAttr(primary.parsed?.tmdbId || '')}" placeholder="ID" inputmode="numeric" />
               </label>
-              <span class="muted meta-line">${escapeHtml(metaLine)}${calib || ''}</span>
+              <span class="muted meta-line">${escapeHtml(metaLine)}${calib || ''}<span class="collide-flag"${groupCollide ? '' : ' hidden'}> · 路径冲突</span></span>
             </div>
           </div>
         </div>
@@ -1325,7 +1326,7 @@ function renderTable() {
       <td class="col-check"><input type="checkbox" data-role="select" ${row.selected && !row.alreadyOrganized ? 'checked' : ''} ${row.alreadyOrganized ? 'disabled title="已在目标位置，无需再整理"' : ''} /></td>
         <td class="col-work">
           <div class="file-cell">
-            <div class="file-name" title="${escapeAttr(row.originalName)}">${escapeHtml(row.originalName)}${row.alreadyOrganized ? ' <span class="tag-done">已在位</span>' : ''}${collideIds.has(row.id) ? ' <span class="tag-warn">冲突</span>' : ''}</div>
+            <div class="file-name" title="${escapeAttr(row.originalName)}">${escapeHtml(row.originalName)}${row.alreadyOrganized ? ' <span class="tag-done">已在位</span>' : ''}<span class="tag-warn"${collideIds.has(row.id) ? '' : ' hidden'}>冲突</span></div>
             <div class="muted file-meta">
               <span class="badge ${row.kind}">${row.kind}</span>
               ${escapeHtml(epHint)}
@@ -1381,9 +1382,15 @@ function refreshSelectionUi() {
     renderTable();
     return;
   }
+  // 冲突视图的成员本身依赖勾选（findDestinationCollisions 只统计已选行），
+  // 可见性需要完整重算，回退全量渲染。
+  if ((state.viewFilter || 'all') === 'conflict') {
+    renderTable();
+    return;
+  }
   const summary = summarizeRows(state.rows);
   const listCtx = getListContext();
-  const { groups, visibleGroups } = listCtx;
+  const { groups, visibleGroups, collideIds } = listCtx;
   const selSize = selectedSizeLabel();
   $('summaryText').textContent =
     `共 ${summary.total} 项` +
@@ -1394,10 +1401,11 @@ function refreshSelectionUi() {
   $('actionBarSummary').textContent = summary.selected
     ? `已选 ${summary.selected} 项${selSize ? ` · ${selSize}` : ''}`
     : `未勾选 · 共 ${summary.total} 项`;
+  syncViewChips(listCtx);
 
   const tbody = $('tbody');
-  const groupByKey = new Map(listCtx.groups.map((g) => [g.key, g]));
-  // Group head checkboxes
+  const groupByKey = new Map(groups.map((g) => [g.key, g]));
+  // Group heads: checkbox state + collision flag（冲突集随勾选变化）
   for (const head of tbody.querySelectorAll('tr.group-head')) {
     const group = groupByKey.get(head.dataset.group);
     if (!group) continue;
@@ -1409,12 +1417,20 @@ function refreshSelectionUi() {
       cb.checked = allSelected;
       cb.indeterminate = !allSelected && someSelected;
     }
+    const groupCollide = group.rows.some((r) => collideIds.has(r.id));
+    head.classList.toggle('is-dup', head.dataset.dup === '1' || groupCollide);
+    const flag = head.querySelector('.collide-flag');
+    if (flag) flag.hidden = !groupCollide;
   }
-  // Row checkboxes (companions follow their parent's selection)
+  // Rows: checkbox + collision highlight/tag（附属行跟随父级勾选）
   const rowsById = new Map(state.rows.map((r) => [String(r.id), r]));
   for (const tr of tbody.querySelectorAll('tr.group-child')) {
     const row = rowsById.get(String(tr.dataset.id));
     if (!row) continue;
+    const collide = collideIds.has(row.id);
+    tr.classList.toggle('is-dup', collide);
+    const tag = tr.querySelector('.tag-warn');
+    if (tag) tag.hidden = !collide;
     const cb = tr.querySelector('input[data-role="select"]');
     if (!cb || cb.disabled) continue;
     cb.checked = !!row.selected;
