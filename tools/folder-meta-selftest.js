@@ -32,7 +32,7 @@ import {
 } from '../lib/pathTitle.js';
 import { detectRegion } from '../lib/region.js';
 import { fileId, seasonNumberFromFolderName, tmdbIdFromFolderName } from '../lib/api115.js';
-import { folderYear } from '../lib/rename.js';
+import { folderYear, renderTemplate, sanitizePathSegment } from '../lib/rename.js';
 
 let fail = 0;
 function check(name, cond, detail = '') {
@@ -783,6 +783,68 @@ check(
     originCountries: ['KR'],
   }) === '欧美剧',
 );
+
+/* ---------- rename: template rendering & edge cases ---------- */
+{
+  check(
+    'renderTemplate pads numbers',
+    renderTemplate('S{season:02d}E{episode:02d}', { season: 1, episode: 5 }) === 'S01E05',
+  );
+  check(
+    'renderTemplate missing season/episode pad to 00',
+    renderTemplate('S{season:02d}E{episode:02d}', {}) === 'S00E00',
+  );
+  check(
+    'renderTemplate unknown key renders empty',
+    renderTemplate('{title} ({year})', { title: 'X' }) === 'X ()',
+  );
+  check('sanitizePathSegment dots-only', sanitizePathSegment('...') === '_');
+  check('sanitizePathSegment empty fallback', sanitizePathSegment('') === 'unnamed');
+
+  // 全角空括号：自定义模板 {title}（{year}） 年份缺失时不残留 （）
+  const cnBracket = resolveOrganizeSettings({
+    ...DEFAULT_SETTINGS,
+    movieNameTemplate: '{title}（{year}）',
+  });
+  check(
+    'strip full-width empty brackets',
+    buildRenamePlan({ kind: 'movie', title: 'Film', ext: '.mkv' }, cnBracket).newName === 'Film.mkv',
+  );
+  check(
+    'keep full-width brackets when year exists',
+    buildRenamePlan({ kind: 'movie', title: 'Film', year: '2020', ext: '.mkv' }, cnBracket).newName
+      === 'Film（2020）.mkv',
+  );
+
+  // Part 追加：模板无 {part} 时追加 - Part N
+  check(
+    'append Part when template lacks {part}',
+    buildRenamePlan(
+      { kind: 'tv', title: 'Show', region: '欧美剧', season: 1, episode: 3, part: 2, ext: '.mkv' },
+      resolveOrganizeSettings({ ...DEFAULT_SETTINGS }),
+    ).newName === 'Show - S01E03 - Part 2.mkv',
+  );
+
+  // moveFiles=false → 不生成路径
+  check(
+    'no path when moveFiles off',
+    buildRenamePlan(
+      { kind: 'tv', title: 'Show', region: '欧美剧', season: 1, episode: 1, ext: '.mkv' },
+      resolveOrganizeSettings({ ...DEFAULT_SETTINGS, moveFiles: false }),
+    ).pathSegments.length === 0,
+  );
+
+  // targetBasePath 前置到路径段最前
+  const withBase = buildRenamePlan(
+    { kind: 'tv', title: '良医', seriesYear: '2017', region: '欧美剧', season: 1, episode: 1, ext: '.mkv' },
+    resolveOrganizeSettings({ ...DEFAULT_SETTINGS, moveFiles: true, targetBasePath: '媒体库/新剧' }),
+  );
+  check(
+    'targetBasePath prepended',
+    withBase.pathSegments[0] === '媒体库' && withBase.pathSegments[1] === '新剧',
+    withBase.pathDisplay,
+  );
+}
 
 console.log(fail ? `\nFAILED ${fail}` : '\nALL PASS');
 process.exit(fail ? 1 : 0);

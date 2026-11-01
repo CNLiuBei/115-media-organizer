@@ -2598,8 +2598,9 @@ async function runOrganize() {
   const okIds = new Set(results.filter((r) => r.ok).map((r) => r.id));
   const failedIds = results.filter((r) => !r.ok).map((r) => r.id);
   // Items never reported (stopped mid-way) also count as pending retry (incl. companions)
+  const failedSet = new Set(failedIds);
   for (const row of selected) {
-    if (!okIds.has(row.id) && !failedIds.includes(row.id)) {
+    if (!okIds.has(row.id) && !failedSet.has(row.id)) {
       failedIds.push(row.id);
     }
   }
